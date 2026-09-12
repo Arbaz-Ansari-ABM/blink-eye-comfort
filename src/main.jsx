@@ -19,6 +19,23 @@ function notify(title, body) {
   }
 }
 
+function playReminderSound() {
+  if (!('AudioContext' in window || 'webkitAudioContext' in window)) return;
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  const context = new AudioContextClass();
+  const oscillator = context.createOscillator();
+  const gain = context.createGain();
+  oscillator.type = 'sine';
+  oscillator.frequency.setValueAtTime(880, context.currentTime);
+  gain.gain.setValueAtTime(0.0001, context.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.22, context.currentTime + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.55);
+  oscillator.connect(gain);
+  gain.connect(context.destination);
+  oscillator.start();
+  oscillator.stop(context.currentTime + 0.6);
+}
+
 function formatTime(total) {
   const minutes = Math.floor(total / 60).toString().padStart(2, '0');
   const seconds = (total % 60).toString().padStart(2, '0');
@@ -85,6 +102,7 @@ function App() {
       setSecondsLeft(REST_SECONDS);
       setEndsAt(Date.now() + REST_SECONDS * 1000);
       setNotice('Focus complete. Time to let your eyes travel across the room.');
+      playReminderSound();
       notify('Time to rest your eyes', 'Look 20 feet away for 20 seconds.');
       return undefined;
     }
@@ -170,6 +188,7 @@ function App() {
 
         {showHelp && <div className="help-popover" role="dialog"><strong>How it works</strong><span>Every 20 minutes, Blink invites you to look 20 feet away for 20 seconds.</span></div>}
         {notice && <div className="live-notice" role="status" aria-live="polite" tabIndex="-1" ref={alertRef}><Sparkles size={16} />{notice}</div>}
+        {isRest && <div className="rest-overlay" role="alertdialog" aria-labelledby="rest-title" aria-describedby="rest-description"><div className="rest-overlay-card"><div className="rest-overlay-eye" aria-hidden="true"><Eye size={42} /></div><p className="eyebrow">20-second eye reset</p><h2 id="rest-title">Look 20 meters away.</h2><p id="rest-description">Let your gaze leave the screen. Soften your eyes, blink slowly, and look at something across the room.</p><div className="rest-countdown"><strong>{formatTime(secondsLeft)}</strong><span>remaining</span></div><p className="rest-overlay-note">Your focus session will continue automatically.</p></div></div>}
 
         {!showJournal && <section className="dashboard-grid">
           <article className={`timer-card ${isRest ? 'timer-card-rest' : ''}`}>
