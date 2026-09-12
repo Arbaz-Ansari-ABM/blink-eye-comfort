@@ -1,16 +1,15 @@
-# Blink — 20-20-20 eye rest companion
+Blink 👁️✨
+Your minimalist companion for healthier screen time.
 
-## Run locally
+Built for developers, designers, and anyone glued to a display, Blink automates the science-backed 20-20-20 rule to prevent digital eye strain, fatigue, and dry eyes.
 
-```bash
-npm install
-npm run dev
-```
+✨ Features
+Automated 20-20-20 Cycle: Runs seamlessly in the background—tracks 20 minutes of focus followed by a gentle 20-second break to look 20 feet away.
 
-Open the local Vite URL shown in your terminal. Create a production bundle with `npm run build`.
+Interactive Rest UI: Immersive, distraction-free overlays designed to help you actually relax your eyes.
 
-## Deploy to Netlify
+Instant Preview: Test and inspect the rest state UI on-demand without waiting for the timer to run out.
 
-This project includes `netlify.toml`. Connect the repository in Netlify; it will use `npm run build` and publish the `dist` directory automatically.
+Session Tracking: Keep tabs on your completed eye-care cycles throughout the workday.
 
-Blink runs entirely in the browser. **Start session** begins the 20-minute focus timer, transitions to a 20-second look-away timer, then records the completed cycle. **Preview a rest state** lets you inspect the rest UI without waiting.
+Browser-First: Runs entirely in your browser with zero server dependencies or data tracking.
