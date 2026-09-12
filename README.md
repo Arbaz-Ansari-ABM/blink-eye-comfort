@@ -31,6 +31,4 @@ npm run dev
  
 ---
  
-## 🌐 Demo
- 
-[Live Demo](#) — (https://eyescomfortz.netlify.app/)
+## 🌐 Demo — (https://eyescomfortz.netlify.app/)
