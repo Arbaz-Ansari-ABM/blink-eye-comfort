@@ -84,9 +84,6 @@ h1 em { color:#e2a85d; font-weight:normal; }
 .cycle.done { background:#5fb8a7; border-color:#5fb8a7; color:#10242b; }
 .last-rest { margin:0; color:#82979a; font-size:11px; }
 .last-rest strong { color:#cbd6d0; font-weight:500; margin-left:6px; }
-.preview-button { width:100%; background:transparent; color:#82979a; border:0; text-align:left; padding:11px 0; font-size:11px; display:flex; align-items:center; gap:8px; }
-.preview-button:hover,.preview-button:focus-visible { color:#5fb8a7; outline:none; }
-.preview-button.active { color:#e2a85d; }
 .live-notice { position:fixed; right:5.7vw; top:111px; background:#e67964; color:#10242b; padding:12px 16px; font-size:12px; display:flex; gap:9px; align-items:center; z-index:3; box-shadow:0 10px 35px rgba(0,0,0,.25); animation:slideIn .3s ease both; }
 .rest-overlay { position:fixed; inset:0; z-index:10; display:grid; place-items:center; padding:24px; background:rgba(7,22,27,.84); backdrop-filter:blur(18px); animation:fadeIn .35s ease both; }
 .rest-overlay-card { width:min(560px,100%); padding:48px 42px 40px; text-align:center; color:#10242b; background:rgba(243,240,232,.96); border:1px solid rgba(255,255,255,.7); box-shadow:0 25px 80px rgba(0,0,0,.4); }
@@ -129,7 +126,6 @@ footer { max-width:1250px; margin:0 auto; padding:28px 0 25px; display:flex; jus
   .timer-card { min-height:590px; padding:28px 23px 20px; }
   .timer-center { padding:18px 0 14px; }
   .side-rail { display:grid; grid-template-columns:1fr 1fr; }
-  .preview-button { grid-column:1/-1; }
   footer { flex-direction:column; gap:9px; padding-bottom:22px; }
   .live-notice { left:20px; right:20px; top:88px; }
   .journal-intro { display:block; padding:0 23px 35px; }

@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { Eye, HelpCircle, Pause, Play, RotateCcw, Sparkles, Volume2 } from 'lucide-react';
 import './styles.css';
 
-const FOCUS_SECONDS = 20 * 60;
+const FOCUS_SECONDS = 10;
 const REST_SECONDS = 20;
 const TIMER_STORAGE_KEY = 'blink-timer-state';
 
@@ -17,6 +17,23 @@ function notify(title, body) {
   if ('Notification' in window && Notification.permission === 'granted') {
     new Notification(title, { body });
   }
+}
+
+function playReminderBeep() {
+  if (!('AudioContext' in window || 'webkitAudioContext' in window)) return;
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  const context = new AudioContextClass();
+  const oscillator = context.createOscillator();
+  const gain = context.createGain();
+  oscillator.type = 'sine';
+  oscillator.frequency.setValueAtTime(880, context.currentTime);
+  gain.gain.setValueAtTime(0.0001, context.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.16, context.currentTime + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.5);
+  oscillator.connect(gain);
+  gain.connect(context.destination);
+  oscillator.start();
+  oscillator.stop(context.currentTime + 0.55);
 }
 
 function formatTime(total) {
@@ -41,12 +58,12 @@ function App() {
   const [endsAt, setEndsAt] = useState(timerState?.endsAt || null);
   const [screenTime, setScreenTime] = useState(timerState?.screenTime || 0);
   const [startedAt, setStartedAt] = useState(timerState?.startedAt || null);
-  const [demoMode, setDemoMode] = useState(false);
   const [notice, setNotice] = useState('');
   const [showHelp, setShowHelp] = useState(false);
   const [showJournal, setShowJournal] = useState(false);
   const alertRef = useRef(null);
   const reminderAudioRef = useRef(null);
+  const beepIntervalRef = useRef(null);
 
   const isRest = phase === 'rest';
   const isRunning = phase === 'focus' || phase === 'rest';
@@ -58,6 +75,12 @@ function App() {
     const date = new Date(Date.now() + secondsLeft * 1000);
     return `Next reminder · ${date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
   }, [isRunning, secondsLeft]);
+
+  useEffect(() => {
+    if (phase === 'rest' && !endsAt) {
+      setEndsAt(Date.now() + Math.max(secondsLeft, 1) * 1000);
+    }
+  }, [phase, endsAt, secondsLeft]);
 
   useEffect(() => {
     if (!isRunning || !endsAt) return undefined;
@@ -88,11 +111,15 @@ function App() {
       setSecondsLeft(REST_SECONDS);
       setEndsAt(Date.now() + REST_SECONDS * 1000);
       setNotice('Focus complete. Time to let your eyes travel across the room.');
+      playReminderBeep();
       const reminderAudio = reminderAudioRef.current;
       if (reminderAudio) {
         reminderAudio.currentTime = 0;
+        reminderAudio.loop = false;
         reminderAudio.play().catch(() => undefined);
       }
+      playReminderBeep();
+      beepIntervalRef.current = window.setInterval(playReminderBeep, 1000);
       notify('Time to rest your eyes', 'Look 20 feet away for 20 seconds.');
       return undefined;
     }
@@ -102,9 +129,19 @@ function App() {
     setSecondsLeft(FOCUS_SECONDS);
     setEndsAt(Date.now() + FOCUS_SECONDS * 1000);
     setNotice('Rest complete. A fresh focus rhythm has begun.');
+    reminderAudioRef.current?.pause();
     notify('Focus time resumed', 'Your eyes are ready for another 20-minute cycle.');
     return undefined;
   }, [isRunning, phase, secondsLeft]);
+
+  useEffect(() => {
+    if (phase === 'rest') return undefined;
+    if (beepIntervalRef.current) {
+      window.clearInterval(beepIntervalRef.current);
+      beepIntervalRef.current = null;
+    }
+    return undefined;
+  }, [phase]);
 
   useEffect(() => {
     window.localStorage.setItem(TIMER_STORAGE_KEY, JSON.stringify({
@@ -119,9 +156,9 @@ function App() {
   }, [notice]);
 
   const start = () => {
-    const nextDuration = phase === 'rest' ? REST_SECONDS : FOCUS_SECONDS;
-    if (phase === 'stopped') setSecondsLeft(nextDuration);
+    const nextDuration = phase === 'rest' ? REST_SECONDS : phase === 'paused' ? secondsLeft : FOCUS_SECONDS;
     if (phase === 'stopped') {
+      setSecondsLeft(nextDuration);
       setScreenTime(0);
       setStartedAt(Date.now());
     }
@@ -130,28 +167,17 @@ function App() {
     setNotice('Blink is running. We’ll nudge you when it’s time to look away.');
     requestNotifications();
     const reminderAudio = reminderAudioRef.current;
-    if (reminderAudio) {
-      reminderAudio.play().then(() => {
-        reminderAudio.pause();
-        reminderAudio.currentTime = 0;
-      }).catch(() => undefined);
-    }
   };
 
   const stop = () => {
-    setPhase('stopped');
-    setSecondsLeft(FOCUS_SECONDS);
+    setPhase('paused');
     setEndsAt(null);
-    setStartedAt(null);
+    if (beepIntervalRef.current) {
+      window.clearInterval(beepIntervalRef.current);
+      beepIntervalRef.current = null;
+    }
+    reminderAudioRef.current?.pause();
     setNotice('Session paused. Your next focus cycle is ready to begin.');
-  };
-
-  const previewRest = () => {
-    setDemoMode((value) => !value);
-    setPhase('rest');
-    setSecondsLeft(REST_SECONDS);
-    setEndsAt(null);
-    setNotice('Preview mode: here’s what your eye rest will feel like.');
   };
 
   const reset = () => {
@@ -160,6 +186,11 @@ function App() {
     setEndsAt(null);
     setScreenTime(0);
     setStartedAt(null);
+    if (beepIntervalRef.current) {
+      window.clearInterval(beepIntervalRef.current);
+      beepIntervalRef.current = null;
+    }
+    reminderAudioRef.current?.pause();
     setNotice('Timer reset.');
   };
 
@@ -201,10 +232,10 @@ function App() {
           <article className={`timer-card ${isRest ? 'timer-card-rest' : ''}`}>
             <div className="timer-card-top">
               <div>
-                <p className="phase-kicker">{isRest ? 'Your eyes are up next' : phase === 'stopped' ? 'A small reset, whenever you’re ready' : 'In your focus flow'}</p>
+                <p className="phase-kicker">{isRest ? 'Your eyes are up next' : phase === 'stopped' ? 'A small reset, whenever you’re ready' : phase === 'paused' ? 'Your rhythm is paused' : 'In your focus flow'}</p>
                 <h2>{isRest ? 'Look 20 feet away' : 'Stay with the moment'}</h2>
               </div>
-              <span className={`phase-badge ${isRest ? 'teal' : ''}`}><span className="badge-dot" />{isRest ? 'Look away' : phase === 'stopped' ? 'Ready' : 'Focus'}</span>
+              <span className={`phase-badge ${isRest ? 'teal' : ''}`}><span className="badge-dot" />{isRest ? 'Look away' : phase === 'stopped' ? 'Ready' : phase === 'paused' ? 'Paused' : 'Focus'}</span>
             </div>
 
             <div className="timer-center">
@@ -216,7 +247,7 @@ function App() {
                 <div className="timer-readout">
                   <span className="timer-label">{isRest ? 'REST' : 'FOCUS'}</span>
                   <strong>{formatTime(secondsLeft)}</strong>
-                  <span className="timer-caption">{isRest ? 'breathe + soften' : phase === 'stopped' ? '20 minutes' : 'until your next pause'}</span>
+                  <span className="timer-caption">{isRest ? 'breathe + soften' : phase === 'stopped' ? '10-second demo' : phase === 'paused' ? 'ready to resume' : 'until your next pause'}</span>
                 </div>
               </div>
             </div>
@@ -224,7 +255,7 @@ function App() {
             <p className="timer-instruction">{isRest ? <>Let your gaze land on something <strong>across the room.</strong><br />About 6 meters is perfect.</> : <>We’ll let you know when it’s time<br className="desktop-break" /> to give your eyes some distance.</>}</p>
 
             <div className="timer-controls">
-              <button className="primary-button" onClick={isRunning ? stop : start}><span>{isRunning ? <Pause size={17} /> : <Play size={17} fill="currentColor" />}</span>{isRunning ? 'Stop session' : 'Start session'}</button>
+              <button className="primary-button" onClick={isRunning ? stop : start}><span>{isRunning ? <Pause size={17} /> : <Play size={17} fill="currentColor" />}</span>{isRunning ? 'Pause session' : phase === 'paused' ? 'Resume session' : 'Start session'}</button>
               <button className="secondary-button" onClick={reset} aria-label="Reset timer"><RotateCcw size={16} /> Reset</button>
             </div>
             <div className="timer-meta"><span>{nextReminder}</span><span className="sound-meta"><Volume2 size={14} /> Sound on</span></div>
@@ -247,7 +278,6 @@ function App() {
               </div>
               <p className="last-rest">Last pause <strong>{lastRest}</strong></p>
             </div>
-            <button className={`preview-button ${demoMode ? 'active' : ''}`} onClick={previewRest}><Sparkles size={15} /> {demoMode ? 'Previewing rest state' : 'Preview a rest state'}</button>
           </aside>
         </section>}
         {showJournal && <section className="journal" aria-labelledby="journal-title">
