@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { Eye, HelpCircle, Pause, Play, RotateCcw, Sparkles, Volume2 } from 'lucide-react';
 import './styles.css';
 
-const FOCUS_SECONDS = 10;
+const FOCUS_SECONDS = 20 * 60;
 const REST_SECONDS = 20;
 const TIMER_STORAGE_KEY = 'blink-timer-state';
 
@@ -247,7 +247,7 @@ function App() {
                 <div className="timer-readout">
                   <span className="timer-label">{isRest ? 'REST' : 'FOCUS'}</span>
                   <strong>{formatTime(secondsLeft)}</strong>
-                  <span className="timer-caption">{isRest ? 'breathe + soften' : phase === 'stopped' ? '10-second demo' : phase === 'paused' ? 'ready to resume' : 'until your next pause'}</span>
+                  <span className="timer-caption">{isRest ? 'breathe + soften' : phase === 'stopped' ? '20-minute focus' : phase === 'paused' ? 'ready to resume' : 'until your next pause'}</span>
                 </div>
               </div>
             </div>
