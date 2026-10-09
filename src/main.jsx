@@ -95,7 +95,13 @@ function App() {
   const [timerState] = useState(() => {
     try {
       const saved = window.localStorage.getItem(TIMER_STORAGE_KEY);
-      return saved ? JSON.parse(saved) : null;
+      const parsed = saved ? JSON.parse(saved) : null;
+      if (!parsed || typeof parsed !== 'object') return null;
+      // A session that ended while the tab was closed restarts fresh instead of firing reminders on load.
+      if ((parsed.phase === 'focus' || parsed.phase === 'rest') && (!parsed.endsAt || parsed.endsAt <= Date.now())) {
+        return { completed: Number(parsed.completed) || 0, lastRest: parsed.lastRest };
+      }
+      return parsed;
     } catch {
       return null;
     }
@@ -637,4 +643,36 @@ function App() {
   );
 }
 
-createRoot(document.getElementById('root')).render(<App />);
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { failed: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch() {
+    // Clear saved state so a bad saved session can't crash the app on every open.
+    try {
+      window.localStorage.removeItem(TIMER_STORAGE_KEY);
+    } catch {
+      // Storage unavailable; nothing to clear.
+    }
+  }
+
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <div className="app-shell" style={{ display: 'grid', placeItems: 'center', textAlign: 'center', padding: 24 }}>
+        <div>
+          <p>Something went wrong. Your timer has been reset.</p>
+          <button type="button" className="primary-button" onClick={() => window.location.reload()}>Reload Blink</button>
+        </div>
+      </div>
+    );
+  }
+}
+
+createRoot(document.getElementById('root')).render(<ErrorBoundary><App /></ErrorBoundary>);
