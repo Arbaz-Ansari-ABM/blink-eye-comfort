@@ -9,32 +9,80 @@ const TIMER_STORAGE_KEY = 'blink-timer-state';
 const REMINDER_TRACK_KEY = 'blink-reminder-track';
 
 function requestNotifications() {
-  if ('Notification' in window && Notification.permission === 'default') {
-    Notification.requestPermission();
+  try {
+    if ('Notification' in window && Notification.permission === 'default') {
+      const result = Notification.requestPermission();
+      result?.catch?.(() => undefined);
+    }
+  } catch {
+    // Some mobile browsers expose Notification without supporting permission requests.
   }
 }
 
+// Android Chrome throws on `new Notification()`; notifications must go through the service worker.
 function notify(title, body) {
-  if ('Notification' in window && Notification.permission === 'granted') {
+  try {
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistration()
+        .then((registration) => {
+          if (registration) return registration.showNotification(title, { body });
+          return new Notification(title, { body });
+        })
+        .catch(() => undefined);
+      return;
+    }
     new Notification(title, { body });
+  } catch {
+    // Notifications are optional; never let them break the timer.
   }
+}
+
+// Mobile browsers cap the number of AudioContexts and start them suspended,
+// so share one context and resume it from a user gesture.
+let sharedAudioContext = null;
+
+function getAudioContext() {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return null;
+  if (!sharedAudioContext || sharedAudioContext.state === 'closed') {
+    try {
+      sharedAudioContext = new AudioContextClass();
+    } catch {
+      return null;
+    }
+  }
+  return sharedAudioContext;
+}
+
+function unlockAudio() {
+  const context = getAudioContext();
+  if (context?.state === 'suspended') context.resume().catch(() => undefined);
 }
 
 function playReminderBeep() {
-  if (!('AudioContext' in window || 'webkitAudioContext' in window)) return;
-  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-  const context = new AudioContextClass();
-  const oscillator = context.createOscillator();
-  const gain = context.createGain();
-  oscillator.type = 'sine';
-  oscillator.frequency.setValueAtTime(880, context.currentTime);
-  gain.gain.setValueAtTime(0.0001, context.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.16, context.currentTime + 0.02);
-  gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.5);
-  oscillator.connect(gain);
-  gain.connect(context.destination);
-  oscillator.start();
-  oscillator.stop(context.currentTime + 0.55);
+  const context = getAudioContext();
+  if (!context) return;
+  try {
+    if (context.state === 'suspended') context.resume().catch(() => undefined);
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.type = 'sine';
+    oscillator.frequency.setValueAtTime(880, context.currentTime);
+    gain.gain.setValueAtTime(0.0001, context.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.16, context.currentTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.5);
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+    oscillator.start();
+    oscillator.stop(context.currentTime + 0.55);
+    oscillator.onended = () => {
+      oscillator.disconnect();
+      gain.disconnect();
+    };
+  } catch {
+    // Ignore audio failures so the timer keeps working.
+  }
 }
 
 function formatTime(total) {
@@ -47,7 +95,13 @@ function App() {
   const [timerState] = useState(() => {
     try {
       const saved = window.localStorage.getItem(TIMER_STORAGE_KEY);
-      return saved ? JSON.parse(saved) : null;
+      const parsed = saved ? JSON.parse(saved) : null;
+      if (!parsed || typeof parsed !== 'object') return null;
+      // A session that ended while the tab was closed restarts fresh instead of firing reminders on load.
+      if ((parsed.phase === 'focus' || parsed.phase === 'rest') && (!parsed.endsAt || parsed.endsAt <= Date.now())) {
+        return { completed: Number(parsed.completed) || 0, lastRest: parsed.lastRest };
+      }
+      return parsed;
     } catch {
       return null;
     }
@@ -174,10 +228,36 @@ function App() {
   }, [phase]);
 
   useEffect(() => {
-    window.localStorage.setItem(TIMER_STORAGE_KEY, JSON.stringify({
-      phase, secondsLeft, completed, lastRest, endsAt, screenTime, startedAt,
-    }));
+    try {
+      window.localStorage.setItem(TIMER_STORAGE_KEY, JSON.stringify({
+        phase, secondsLeft, completed, lastRest, endsAt, screenTime, startedAt,
+      }));
+    } catch {
+      // Storage can be unavailable (e.g. private browsing); the timer still works.
+    }
   }, [phase, secondsLeft, completed, lastRest, endsAt, screenTime, startedAt]);
+
+  useEffect(() => {
+    if (!isRunning || !('wakeLock' in navigator)) return undefined;
+    let wakeLock = null;
+    let cancelled = false;
+    const requestWakeLock = () => {
+      if (document.visibilityState !== 'visible') return;
+      navigator.wakeLock.request('screen')
+        .then((lock) => {
+          if (cancelled) lock.release().catch(() => undefined);
+          else wakeLock = lock;
+        })
+        .catch(() => undefined);
+    };
+    requestWakeLock();
+    document.addEventListener('visibilitychange', requestWakeLock);
+    return () => {
+      cancelled = true;
+      document.removeEventListener('visibilitychange', requestWakeLock);
+      wakeLock?.release().catch(() => undefined);
+    };
+  }, [isRunning]);
 
   useEffect(() => {
     if (!notice) return undefined;
@@ -296,6 +376,7 @@ function App() {
   const toggleMusic = () => {
     const audio = reminderAudioRef.current;
     if (!audio) return;
+    unlockAudio();
     if (musicPlaying) {
       audio.pause();
       setMusicPlaying(false);
@@ -342,7 +423,19 @@ function App() {
     setPhase(phase === 'rest' ? 'rest' : 'focus');
     setNotice('Blink is running. We’ll nudge you when it’s time to look away.');
     requestNotifications();
+    unlockAudio();
+    // Prime the reminder audio during this tap so Android allows it to play later.
     const reminderAudio = reminderAudioRef.current;
+    if (reminderAudio && reminderAudio.paused && !musicPlaying) {
+      reminderAudio.muted = true;
+      reminderAudio.play()
+        .then(() => {
+          reminderAudio.pause();
+          reminderAudio.currentTime = 0;
+          reminderAudio.muted = musicMuted;
+        })
+        .catch(() => { reminderAudio.muted = musicMuted; });
+    }
   };
 
   const stop = () => {
@@ -550,4 +643,36 @@ function App() {
   );
 }
 
-createRoot(document.getElementById('root')).render(<App />);
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { failed: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch() {
+    // Clear saved state so a bad saved session can't crash the app on every open.
+    try {
+      window.localStorage.removeItem(TIMER_STORAGE_KEY);
+    } catch {
+      // Storage unavailable; nothing to clear.
+    }
+  }
+
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <div className="app-shell" style={{ display: 'grid', placeItems: 'center', textAlign: 'center', padding: 24 }}>
+        <div>
+          <p>Something went wrong. Your timer has been reset.</p>
+          <button type="button" className="primary-button" onClick={() => window.location.reload()}>Reload Blink</button>
+        </div>
+      </div>
+    );
+  }
+}
+
+createRoot(document.getElementById('root')).render(<ErrorBoundary><App /></ErrorBoundary>);
