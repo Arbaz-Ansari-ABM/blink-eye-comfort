@@ -38,3 +38,11 @@ server.
 ---
  
 ## 🌐 Demo — (https://eyescomfortz.netlify.app/)
+
+## 📲 Install as a PWA
+
+The production build includes a web app manifest, install icons, and a service
+worker. Open the deployed HTTPS site in a supported browser and use its
+“Install app” or “Add to Home Screen” option. The app shell remains available
+offline after the first successful load; audio still requires a user gesture
+when the browser blocks autoplay.

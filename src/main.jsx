@@ -1,16 +1,17 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Bell, BookOpen, ChevronLeft, ChevronRight, Coffee, Dumbbell, Eye, HelpCircle, Home, Pause, Play, Repeat2, RotateCcw, Shuffle, Sparkles, Volume2, X } from 'lucide-react';
+import { Bell, BookOpen, ChevronLeft, ChevronDown, Coffee, Dumbbell, Eye, HelpCircle, Home, Pause, Play, RotateCcw, ShieldCheck, Smartphone, Sparkles, Square, Volume2 } from 'lucide-react';
 import './styles.css';
-
-const FOCUS_SECONDS = 20 * 60;
-const REST_SECONDS = 20;
-const TIMER_STORAGE_KEY = 'blink-timer-state';
-const REMINDER_TRACK_KEY = 'blink-reminder-track';
+import { audioManager } from './audio/AudioManager.js';
+import { FOCUS_SECONDS, REST_SECONDS, useRestTimer } from './audio/useRestTimer.js';
+import { useSoundSettings } from './audio/useSoundSettings.js';
+import SoundSettings from './audio/SoundSettings.jsx';
 
 function requestNotifications() {
-  if ('Notification' in window && Notification.permission === 'default') {
-    Notification.requestPermission();
+  if ('Notification' in window && typeof Notification.requestPermission === 'function' && Notification.permission === 'default') {
+    // Small delay so the user's tap gesture has settled and the dialog
+    // feels intentional rather than an instant pop-up.
+    setTimeout(() => Notification.requestPermission(), 600);
   }
 }
 
@@ -33,46 +34,16 @@ function getFocusableElements(container) {
 }
 
 function App() {
-  const [timerState] = useState(() => {
-    try {
-      const saved = window.localStorage.getItem(TIMER_STORAGE_KEY);
-      return saved ? JSON.parse(saved) : null;
-    } catch {
-      return null;
-    }
-  });
-  const [savedReminderTrack] = useState(() => {
-    try {
-      return window.localStorage.getItem(REMINDER_TRACK_KEY) || 'iphone-style-beep';
-    } catch {
-      return 'iphone-style-beep';
-    }
-  });
-  const [phase, setPhase] = useState(timerState?.phase || 'stopped');
-  const [secondsLeft, setSecondsLeft] = useState(timerState?.secondsLeft || FOCUS_SECONDS);
-  const [completed, setCompleted] = useState(timerState?.completed ?? 0);
-  const [lastRest, setLastRest] = useState(timerState?.lastRest || 'Not yet today');
-  const [endsAt, setEndsAt] = useState(timerState?.endsAt || null);
-  const [screenTime, setScreenTime] = useState(timerState?.screenTime || 0);
-  const [startedAt, setStartedAt] = useState(timerState?.startedAt || null);
+  const sound = useSoundSettings(audioManager);
+  const audioState = useSyncExternalStore(audioManager.subscribe, audioManager.getSnapshot);
   const [notice, setNotice] = useState('');
   const [showHelp, setShowHelp] = useState(false);
   const [showJournal, setShowJournal] = useState(false);
   const [showSound, setShowSound] = useState(false);
-  const [uploadedTracks, setUploadedTracks] = useState([]);
-  const [currentTrackIndex, setCurrentTrackIndex] = useState(0);
-  const [musicPlaying, setMusicPlaying] = useState(false);
-  const [musicProgress, setMusicProgress] = useState(0);
-  const [musicVolume, setMusicVolume] = useState(0.8);
-  const [musicMuted, setMusicMuted] = useState(false);
-  const [repeatTrack, setRepeatTrack] = useState(false);
-  const [shuffleTracks, setShuffleTracks] = useState(false);
-  const [reminderTrackId, setReminderTrackId] = useState(savedReminderTrack);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const alertRef = useRef(null);
   const restDialogRef = useRef(null);
   const restReturnFocusRef = useRef(null);
-  const reminderAudioRef = useRef(null);
   const menuToggleRef = useRef(null);
   const soundDialogRef = useRef(null);
   const soundReturnFocusRef = useRef(null);
@@ -80,92 +51,37 @@ function App() {
   const journalDialogRef = useRef(null);
   const helpReturnFocusRef = useRef(null);
   const journalReturnFocusRef = useRef(null);
-  const audioInputRef = useRef(null);
   const headerRef = useRef(null);
-  const uploadedTracksRef = useRef([]);
 
-  const isRest = phase === 'rest';
-  const isRunning = phase === 'focus' || phase === 'rest';
+  const handleTimerEvent = useCallback((type) => {
+    if (type === 'started') setNotice('Blink is running. We’ll nudge you when it’s time to look away.');
+    if (type === 'resumed') setNotice('Session resumed.');
+    if (type === 'paused') setNotice('Session paused. Your next focus cycle is ready to begin.');
+    if (type === 'reset') setNotice('Timer reset.');
+    if (type === 'focus-complete') {
+      setNotice('Focus complete. Time to let your eyes travel across the room.');
+      notify('Time to rest your eyes', 'Look 20 feet away for 20 seconds.');
+    }
+    if (type === 'rest-complete') {
+      setNotice('Rest complete. A fresh focus rhythm has begun.');
+      notify('Focus time resumed', 'Your eyes are ready for another 20-minute cycle.');
+    }
+  }, []);
+
+  const {
+    phase, secondsLeft, completed, lastRest, screenTime, isRunning, isRest, start, pause, reset,
+  } = useRestTimer({ audio: audioManager, onEvent: handleTimerEvent });
+
+  const handleStart = () => { requestNotifications(); start(); };
   const duration = isRest ? REST_SECONDS : FOCUS_SECONDS;
   const progress = Math.max(0, Math.min(1, 1 - secondsLeft / duration));
   const circumference = 2 * Math.PI * 142;
+  const soundLabel = sound.settings.enabled ? 'Sound on' : 'Sound off';
   const nextReminder = useMemo(() => {
     if (!isRunning) return 'Ready when you are';
     const date = new Date(Date.now() + secondsLeft * 1000);
     return `Next reminder · ${date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
   }, [isRunning, secondsLeft]);
-  const tracks = useMemo(() => [
-    { id: 'iphone-style-beep', name: 'iPhone-style beep', src: '/iphone-style-beep.wav' },
-    { id: 'blink-reminder', name: 'Blink reminder', src: '/eyes.mp3' },
-    ...uploadedTracks,
-  ], [uploadedTracks]);
-  const currentTrack = tracks[currentTrackIndex] || tracks[0];
-  const reminderTrack = tracks.find((track) => track.id === reminderTrackId) || tracks[0];
-
-  useEffect(() => {
-    if (phase === 'rest' && !endsAt) {
-      setEndsAt(Date.now() + Math.max(secondsLeft, 1) * 1000);
-    }
-  }, [phase, endsAt, secondsLeft]);
-
-  useEffect(() => {
-    if (!isRunning || !endsAt) return undefined;
-    const updateRemaining = () => {
-      const remaining = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
-      setSecondsLeft(remaining);
-      if (remaining === 0) {
-        setEndsAt(null);
-      }
-    };
-    updateRemaining();
-    const timer = window.setInterval(updateRemaining, 1000);
-    return () => window.clearInterval(timer);
-  }, [isRunning, endsAt]);
-
-  useEffect(() => {
-    if (!isRunning || !startedAt) return undefined;
-    const updateScreenTime = () => setScreenTime(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)));
-    updateScreenTime();
-    const timer = window.setInterval(updateScreenTime, 1000);
-    return () => window.clearInterval(timer);
-  }, [isRunning]);
-
-  useEffect(() => {
-    if (!isRunning || secondsLeft > 0) return undefined;
-    if (phase === 'focus') {
-      setPhase('rest');
-      setSecondsLeft(REST_SECONDS);
-      setEndsAt(Date.now() + REST_SECONDS * 1000);
-      setNotice('Focus complete. Time to let your eyes travel across the room.');
-      const reminderAudio = reminderAudioRef.current;
-      if (reminderAudio) {
-        reminderAudio.currentTime = 0;
-        reminderAudio.loop = false;
-        reminderAudio.play().catch(() => setNotice('Reminder sound was blocked. Tap Start to allow audio.'));
-      }
-      notify('Time to rest your eyes', 'Look 20 feet away for 20 seconds.');
-      return undefined;
-    }
-    setCompleted((count) => count + 1);
-    setLastRest(new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }));
-    setPhase('focus');
-    setSecondsLeft(FOCUS_SECONDS);
-    setEndsAt(Date.now() + FOCUS_SECONDS * 1000);
-    setNotice('Rest complete. A fresh focus rhythm has begun.');
-    reminderAudioRef.current?.pause();
-    notify('Focus time resumed', 'Your eyes are ready for another 20-minute cycle.');
-    return undefined;
-  }, [isRunning, phase, secondsLeft]);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(TIMER_STORAGE_KEY, JSON.stringify({
-        phase, secondsLeft, completed, lastRest, endsAt, screenTime, startedAt,
-      }));
-    } catch {
-      // Private browsing and locked-down profiles can deny persistence.
-    }
-  }, [phase, secondsLeft, completed, lastRest, endsAt, screenTime, startedAt]);
 
   useEffect(() => {
     if (!notice) return undefined;
@@ -174,60 +90,8 @@ function App() {
   }, [notice]);
 
   useEffect(() => {
-    uploadedTracksRef.current = uploadedTracks;
-  }, [uploadedTracks]);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(REMINDER_TRACK_KEY, reminderTrackId);
-    } catch {
-      setNotice('Reminder selection could not be saved.');
-    }
-  }, [reminderTrackId]);
-
-  useEffect(() => () => {
-    uploadedTracksRef.current.forEach((track) => URL.revokeObjectURL(track.src));
-  }, []);
-
-  useEffect(() => {
-    const audio = reminderAudioRef.current;
-    if (!audio) return undefined;
-    const updateProgress = () => setMusicProgress(audio.duration ? audio.currentTime / audio.duration : 0);
-    const handleEnded = () => {
-      if (repeatTrack) {
-        audio.currentTime = 0;
-        audio.play().catch(() => {
-          setMusicPlaying(false);
-          setNotice('Sound could not replay. Tap Play to try again.');
-        });
-        return;
-      }
-      setMusicPlaying(false);
-      if (tracks.length > 1) {
-        const nextIndex = shuffleTracks
-          ? Math.floor(Math.random() * tracks.length)
-          : (currentTrackIndex + 1) % tracks.length;
-        setCurrentTrackIndex(nextIndex);
-      }
-    };
-    audio.addEventListener('timeupdate', updateProgress);
-    audio.addEventListener('ended', handleEnded);
-    audio.volume = musicVolume;
-    return () => {
-      audio.removeEventListener('timeupdate', updateProgress);
-      audio.removeEventListener('ended', handleEnded);
-    };
-  }, [currentTrackIndex, musicVolume, repeatTrack, shuffleTracks, tracks.length]);
-
-  useEffect(() => {
-    const audio = reminderAudioRef.current;
-    if (!audio || !musicPlaying) return undefined;
-    audio.play().catch(() => {
-      setMusicPlaying(false);
-      setNotice('Sound playback was blocked. Tap Play to try again.');
-    });
-    return undefined;
-  }, [currentTrackIndex, musicPlaying]);
+    if (audioState.blocked) setNotice('Sound is waiting for a tap. Tap anywhere to enable it.');
+  }, [audioState.blocked]);
 
   useEffect(() => {
     if (!isRest) {
@@ -444,95 +308,20 @@ function App() {
     setShowSound(false);
   };
 
-  const handleAudioUpload = (event) => {
-    const files = Array.from(event.target.files || []);
-    const audioFiles = files.filter((file) => file.type.startsWith('audio/'));
-    if (!audioFiles.length) {
-      setNotice('Please choose one or more audio files.');
-      event.target.value = '';
-      return;
-    }
-    setUploadedTracks((current) => [...current, ...audioFiles.map((file) => ({
-      id: `upload-${window.crypto?.randomUUID?.() || Date.now()}-${file.name}`,
-      name: file.name,
-      src: URL.createObjectURL(file),
-    }))]);
-    setNotice(`${audioFiles.length} track${audioFiles.length > 1 ? 's' : ''} added.`);
-    event.target.value = '';
-  };
-
-  const toggleMusic = () => {
-    const audio = reminderAudioRef.current;
-    if (!audio) return;
-    if (musicPlaying) {
-      audio.pause();
-      setMusicPlaying(false);
-      return;
-    }
-    audio.play().then(() => setMusicPlaying(true)).catch(() => setNotice('Tap again to start the sound.'));
-  };
-
-  const selectTrack = (index) => {
-    setCurrentTrackIndex(index);
-    setMusicProgress(0);
-    setMusicPlaying(true);
-  };
-
-  const changeTrack = (direction) => {
-    if (tracks.length < 2) return;
-    selectTrack((currentTrackIndex + direction + tracks.length) % tracks.length);
-  };
-
-  const removeTrack = (index) => {
-    if (index < 2) return;
-    const track = uploadedTracks[index - 2];
-    URL.revokeObjectURL(track.src);
-    setUploadedTracks((current) => current.filter((_, itemIndex) => itemIndex !== index - 2));
-    if (track.id === reminderTrackId) {
-      setReminderTrackId('iphone-style-beep');
-    }
-    setCurrentTrackIndex((current) => (current >= index ? Math.max(0, current - 1) : current));
-  };
-
-  const setAsReminder = (track) => {
-    setReminderTrackId(track.id);
-    setNotice(`${track.name} is now your reminder ringtone.`);
-  };
-
-  const start = () => {
-    const nextDuration = phase === 'rest' ? REST_SECONDS : phase === 'paused' ? secondsLeft : FOCUS_SECONDS;
-    if (phase === 'stopped') {
-      setSecondsLeft(nextDuration);
-      setScreenTime(0);
-      setStartedAt(Date.now());
-    }
-    setEndsAt(Date.now() + nextDuration * 1000);
-    setPhase(phase === 'rest' ? 'rest' : 'focus');
-    setNotice('Blink is running. We’ll nudge you when it’s time to look away.');
-    requestNotifications();
-    const reminderAudio = reminderAudioRef.current;
-  };
-
-  const stop = () => {
-    setPhase('paused');
-    setEndsAt(null);
-    reminderAudioRef.current?.pause();
-    setNotice('Session paused. Your next focus cycle is ready to begin.');
-  };
-
-  const reset = () => {
-    setPhase('stopped');
-    setSecondsLeft(FOCUS_SECONDS);
-    setEndsAt(null);
-    setScreenTime(0);
-    setStartedAt(null);
-    reminderAudioRef.current?.pause();
-    setNotice('Timer reset.');
+  const scrollToPwa = (event) => {
+    event.preventDefault();
+    closeContentView(); // the PWA section is hidden while a panel is open
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+      const target = document.getElementById('get-pwa');
+      if (!target) return;
+      const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      target.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
+      target.focus({ preventScroll: true });
+    }));
   };
 
   return (
     <div className={`app-shell ${isRest ? 'rest-mode' : ''}`}>
-      <audio ref={reminderAudioRef} preload="auto" src={reminderTrack.src} aria-hidden="true" />
       <header className="site-header" ref={headerRef}>
         <a className="wordmark" href="/" aria-label="Blink home"><span className="wordmark-dot" />blink</a>
         <div className="signature" aria-label="Twenty twenty twenty rule">20<span>—</span>20<span>—</span>20</div>
@@ -552,7 +341,7 @@ function App() {
           </span>
         </button>
         <div className="header-actions">
-          <button className={`icon-button sound-icon-button ${showSound ? 'active' : ''}`} aria-label="Open focus music" title="Focus music" onClick={() => { setShowSound((value) => !value); setShowHelp(false); setShowJournal(false); }}><Volume2 size={18} /></button>
+          <button className={`icon-button sound-icon-button ${showSound ? 'active' : ''}`} aria-label="Open sound settings" title="Sound settings" onClick={() => { setShowSound((value) => !value); setShowHelp(false); setShowJournal(false); }}><Volume2 size={18} /></button>
           <button className={`icon-button ${showHelp ? 'active' : ''}`} aria-label="Open how Blink works" title="How Blink works" onClick={() => { setShowHelp((value) => !value); setShowJournal(false); setShowSound(false); }}><HelpCircle size={18} /></button>
           <button className={`icon-button eye-icon-button ${showJournal ? 'active' : ''}`} aria-label="Open eye comfort journal" title="Eye comfort journal" onClick={() => { setShowJournal((value) => !value); setShowHelp(false); setShowSound(false); }}><span className="iris-mark"><Eye size={19} /></span></button>
         </div>
@@ -560,8 +349,7 @@ function App() {
       <nav id="mobile-navigation" className={`mobile-nav ${mobileMenuOpen ? 'is-open' : ''}`} aria-label="Mobile navigation" aria-hidden={!mobileMenuOpen}>
         <button className="mobile-nav-backdrop" type="button" aria-label="Close navigation menu" tabIndex={mobileMenuOpen ? 0 : -1} onClick={closeMobileMenu} />
         <div className="mobile-icon-nav">
-          <button type="button" className="mobile-nav-close" aria-label="Close navigation menu" tabIndex={mobileMenuOpen ? 0 : -1} onClick={closeMobileMenu}><X size={20} /></button>
-          <button type="button" aria-label="Open focus music" title="Focus music" tabIndex={mobileMenuOpen ? 0 : -1} onClick={() => { setShowSound(true); setShowHelp(false); setShowJournal(false); closeMobileMenu(); }}><Volume2 size={18} /><span className="mobile-nav-label">Sound</span></button>
+          <button type="button" aria-label="Open sound settings" title="Sound settings" tabIndex={mobileMenuOpen ? 0 : -1} onClick={() => { setShowSound(true); setShowHelp(false); setShowJournal(false); closeMobileMenu(); }}><Volume2 size={18} /><span className="mobile-nav-label">Sound</span></button>
           <button type="button" aria-label="Open how Blink works" title="How Blink works" tabIndex={mobileMenuOpen ? 0 : -1} onClick={() => { setShowHelp(true); setShowJournal(false); setShowSound(false); closeMobileMenu(); }}><HelpCircle size={18} /><span className="mobile-nav-label">Learn</span></button>
           <button type="button" aria-label="Open eye comfort journal" title="Eye comfort journal" tabIndex={mobileMenuOpen ? 0 : -1} onClick={() => { setShowJournal(true); setShowHelp(false); setShowSound(false); closeMobileMenu(); }}><span className="iris-mark"><Eye size={18} /></span><span className="mobile-nav-label">Journal</span></button>
         </div>
@@ -573,7 +361,14 @@ function App() {
             <p className="eyebrow">Vision care <span>/</span> daily rhythm</p>
             <h1 id="page-title">Give your eyes<br /><em>a well-deserved break.</em></h1>
           </div>
-          <p className="intro-copy">A gentle, beautifully timed pause for the way you work.<br className="desktop-break" /> Blink keeps the 20-20-20 rule close, without getting in your way.</p>
+          <div className="intro-side">
+            <a className="apk-callout" href="#get-pwa" onClick={scrollToPwa} aria-label="Scroll down to learn about the Blink PWA">
+              <span className="apk-callout-icon" aria-hidden="true"><Smartphone size={20} /></span>
+              <span className="apk-callout-copy"><strong>Scroll down to explore the PWA</strong><small>Install Blink on your device</small></span>
+              <span className="apk-callout-go" aria-hidden="true"><ChevronDown size={18} /></span>
+            </a>
+            <p className="intro-copy">A gentle, beautifully timed pause for the way you work.<br className="desktop-break" /> Blink keeps the 20-20-20 rule close, without getting in your way.</p>
+          </div>
         </section>
 
         {notice && <div className="live-notice" role="status" aria-live="polite" tabIndex="-1" ref={alertRef}><Sparkles size={16} />{notice}</div>}
@@ -588,14 +383,16 @@ function App() {
           </div>
         </div>}
 
-        {!showJournal && !showHelp && !showSound && <section id="timer" className="dashboard-grid">
+        {!showJournal && !showHelp && !showSound && (
+          <>
+            <section id="timer" className="dashboard-grid">
           <article className={`timer-card ${isRest ? 'timer-card-rest' : ''}`}>
             <div className="timer-card-top">
               <div>
                 <p className="phase-kicker">{isRest ? 'Your eyes are up next' : phase === 'stopped' ? 'A small reset, whenever you’re ready' : phase === 'paused' ? 'Your rhythm is paused' : 'In your focus flow'}</p>
                 <h2>{isRest ? 'Look 20 feet away' : 'Stay with the moment'}</h2>
               </div>
-              <span className={`phase-badge ${isRest ? 'teal' : ''}`}><span className="badge-dot" />{isRest ? 'Look away' : phase === 'stopped' ? 'Ready' : phase === 'paused' ? 'Paused' : 'Focus'}</span>
+              <span className={`phase-badge ${isRest ? 'teal' : phase === 'paused' ? 'paused' : ''}`}><span className="badge-dot" />{isRest ? 'Look away' : phase === 'stopped' ? 'Ready' : phase === 'paused' ? 'Paused' : 'Focus'}</span>
             </div>
 
             <div className="timer-center">
@@ -615,10 +412,10 @@ function App() {
             <p className="timer-instruction">{isRest ? <>Let your gaze land on something <strong>across the room.</strong><br />About 6 meters is perfect.</> : <>We’ll let you know when it’s time<br className="desktop-break" /> to give your eyes some distance.</>}</p>
 
             <div className="timer-controls">
-              <button className="primary-button" onClick={isRunning ? stop : start}><span>{isRunning ? <Pause size={17} /> : <Play size={17} fill="currentColor" />}</span>{isRunning ? 'Pause session' : phase === 'paused' ? 'Resume session' : 'Start session'}</button>
+              <button className="primary-button" onClick={isRunning ? pause : handleStart}><span>{isRunning ? <Pause size={17} /> : <Play size={17} fill="currentColor" />}</span>{isRunning ? 'Pause session' : phase === 'paused' ? 'Resume session' : 'Start session'}</button>
               <button className="secondary-button" onClick={reset} aria-label="Reset timer"><RotateCcw size={16} /> Reset</button>
             </div>
-            <div className="timer-meta"><span>{nextReminder}</span><button className={`sound-meta ${showSound ? 'active' : ''}`} type="button" onClick={() => { setShowSound(true); setShowHelp(false); setShowJournal(false); }}><Volume2 size={14} /> Sound on</button></div>
+            <div className="timer-meta"><span>{nextReminder}</span><button className={`sound-meta ${showSound ? 'active' : ''}`} type="button" onClick={() => { setShowSound(true); setShowHelp(false); setShowJournal(false); }}><Volume2 size={14} /> {soundLabel}</button></div>
             {isRunning && <div className="screen-time"><span>Screen time</span><strong>{formatTime(screenTime)}</strong></div>}
           </article>
 
@@ -626,9 +423,9 @@ function App() {
             <div className="shortcut-panel" aria-label="Quick actions">
               <div className="shortcut-heading"><p className="eyebrow">Quick actions</p><span>Tap to make space</span></div>
               <div className="shortcut-grid">
-                <button type="button" className="shortcut-card shortcut-focus" onClick={isRunning ? stop : start}><span className="shortcut-icon"><Eye size={17} /></span><strong>{isRunning ? 'Pause focus' : 'Focus mode'}</strong><small>{isRunning ? 'Take a pause' : 'Start a session'}</small></button>
+                <button type="button" className="shortcut-card shortcut-focus" onClick={isRunning ? pause : handleStart}><span className="shortcut-icon"><Eye size={17} /></span><strong>{isRunning ? 'Pause focus' : 'Focus mode'}</strong><small>{isRunning ? 'Take a pause' : 'Start a session'}</small></button>
                 <button type="button" className="shortcut-card shortcut-rest" onClick={() => { setShowHelp(true); setShowJournal(false); setShowSound(false); }}><span className="shortcut-icon"><Coffee size={17} /></span><strong>Break mode</strong><small>Try a 20 sec reset</small></button>
-                <button type="button" className="shortcut-card shortcut-sound" onClick={() => { setShowSound(true); setShowHelp(false); setShowJournal(false); }}><span className="shortcut-icon"><Bell size={17} /></span><strong>Reminders</strong><small>Sound is on</small></button>
+                <button type="button" className="shortcut-card shortcut-sound" onClick={() => { setShowSound(true); setShowHelp(false); setShowJournal(false); }}><span className="shortcut-icon"><Bell size={17} /></span><strong>Reminders</strong><small>{sound.settings.enabled ? 'Sound is on' : 'Sound is off'}</small></button>
                 <button type="button" className="shortcut-card shortcut-exercise" onClick={() => { setShowJournal(true); setShowHelp(false); setShowSound(false); }}><span className="shortcut-icon"><Dumbbell size={17} /></span><strong>Eye exercises</strong><small>Gentle guidance</small></button>
               </div>
             </div>
@@ -648,7 +445,65 @@ function App() {
               <p className="last-rest">Last pause <strong>{lastRest}</strong></p>
             </div>
           </aside>
-        </section>}
+        </section>
+          </>
+        )}
+
+        {/* The hero callout scrolls here to explain the installable PWA. */}
+        {!showJournal && !showHelp && !showSound && (
+        <section id="get-pwa" className="app-download-section" aria-labelledby="pwa-title" tabIndex={-1}>
+          <div className="download-card">
+            <div className="download-content">
+              <p className="eyebrow">Progressive Web App (PWA) <span>/</span> Installable web app</p>
+              <div className="apk-identity">
+                <span className="apk-icon" aria-hidden="true"><Eye size={26} /></span>
+                <div><strong>Blink PWA</strong><small>20—20—20 eye-care timer</small></div>
+              </div>
+              <h2 id="pwa-title">Use Blink as a PWA</h2>
+              <p className="download-copy">Install Blink directly from your browser for a focused, app-like experience. Your timer and settings stay on this device.</p>
+              <div className="download-actions">
+                <span className="download-badge">
+                  <Smartphone size={14} className="badge-icon" />
+                  <span>Install from browser</span>
+                </span>
+                <span className="download-badge">APK coming soon</span>
+              </div>
+              <dl className="apk-facts">
+                <div><dt>Works on</dt><dd>Desktop & mobile</dd></div>
+                <div><dt>Offline</dt><dd>App shell cached</dd></div>
+                <div><dt>Data</dt><dd>Stays on device</dd></div>
+              </dl>
+            </div>
+            <div className="download-visual" aria-hidden="true">
+              <div className="phone-mockup">
+                <div className="phone-screen">
+                  <span className="phone-dot" />
+                  <div className="phone-eye"><Eye size={28} /></div>
+                  <span className="phone-title">Blink</span>
+                  <span className="phone-subtitle">20 — 20 — 20</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="apk-guide">
+            <div className="apk-steps-card">
+              <p className="eyebrow">How to install the PWA</p>
+              <ol className="apk-steps">
+                <li><span>1</span><div><strong>Open Blink in a supported browser</strong><small>Use the deployed HTTPS website in Chrome, Edge, Safari, or another browser with PWA support.</small></div></li>
+                <li><span>2</span><div><strong>Choose Install or Add to Home Screen</strong><small>Use your browser’s install option to add Blink to your desktop or home screen.</small></div></li>
+                <li><span>3</span><div><strong>Open Blink like an app</strong><small>The standalone window keeps the timer focused and the app shell remains available offline after the first load.</small></div></li>
+              </ol>
+            </div>
+            <aside className="apk-note">
+              <ShieldCheck size={22} aria-hidden="true" />
+              <div>
+                <strong>A calm, private install</strong>
+                <p>Blink’s PWA uses the browser’s standard install flow. No app-store download is needed, and your timer settings remain stored locally on this device.</p>
+              </div>
+            </aside>
+          </div>
+        </section>
+        )}
         {showJournal && <section className="journal content-view sound-view" ref={journalDialogRef} tabIndex="-1" role="dialog" aria-modal="true" aria-labelledby="journal-title">
           <button type="button" className="content-back-button" aria-label="Back to timer" title="Back to timer" onClick={closeContentView}><ChevronLeft size={18} /><span>Back</span></button>
           <div className="journal-intro">
@@ -676,32 +531,7 @@ function App() {
           </div>
         </section>}
         <button className={`drawer-backdrop ${showSound || showHelp || showJournal ? 'is-open' : ''}`} type="button" aria-hidden={!showSound && !showHelp && !showJournal} tabIndex={(showSound || showHelp || showJournal) ? 0 : -1} aria-label="Close panel" onClick={closeContentView} />
-        {showSound && <section className="journal info-page content-view sound-view" ref={soundDialogRef} tabIndex="-1" role="dialog" aria-modal="true" aria-labelledby="sound-title">
-          <button type="button" className="content-back-button" aria-label="Back to timer" title="Back to timer" onClick={closeContentView}><span>Back</span><X size={17} /></button>
-          <div className="sound-view-heading"><p className="eyebrow">Focus atmosphere</p><h2 id="sound-title">Sound settings</h2><p>Choose a gentle cue for your next eye break.</p></div>
-          <div className="sound-picker" aria-label="Reminder sound">
-            <div className="music-player">
-              <div className="music-player-heading"><Volume2 size={19} /><strong>{currentTrack.name}</strong></div>
-              <input className="music-progress" type="range" min="0" max="1" step="0.01" value={musicProgress} aria-label="Music progress" onChange={(event) => { const audio = reminderAudioRef.current; if (audio?.duration) { audio.currentTime = Number(event.target.value) * audio.duration; setMusicProgress(Number(event.target.value)); } }} />
-              <div className="music-controls">
-                <button type="button" aria-label="Previous track" onClick={() => changeTrack(-1)}><ChevronLeft size={18} /></button>
-                <button type="button" className="sound-preview" aria-label={musicPlaying ? 'Pause music' : 'Play music'} onClick={toggleMusic}>{musicPlaying ? <Pause size={25} /> : <Play size={25} fill="currentColor" />}</button>
-                <button type="button" aria-label="Next track" onClick={() => changeTrack(1)}><ChevronRight size={18} /></button>
-              </div>
-              <div className="music-options">
-                <button type="button" aria-label={musicMuted ? 'Unmute music' : 'Mute music'} onClick={() => { setMusicMuted((value) => !value); if (reminderAudioRef.current) reminderAudioRef.current.muted = !musicMuted; }}><Volume2 size={15} /></button>
-                <label className="music-volume"><input type="range" min="0" max="1" step="0.01" value={musicVolume} aria-label="Music volume" onChange={(event) => { const value = Number(event.target.value); setMusicVolume(value); if (reminderAudioRef.current) reminderAudioRef.current.volume = value; }} /></label>
-                <button type="button" className={repeatTrack ? 'selected' : ''} aria-label="Toggle repeat" onClick={() => setRepeatTrack((value) => !value)}><Repeat2 size={15} /></button>
-                <button type="button" className={shuffleTracks ? 'selected' : ''} aria-label="Toggle shuffle" onClick={() => setShuffleTracks((value) => !value)}><Shuffle size={15} /></button>
-              </div>
-            </div>
-            <input ref={audioInputRef} className="sr-only" type="file" accept="audio/*" multiple onChange={handleAudioUpload} />
-            <button type="button" className="upload-icon-button" aria-label="Upload ringtone" title="Upload ringtone" onClick={() => audioInputRef.current?.click()}><span>+</span></button>
-          </div>
-          <div className="track-list" aria-label="Available music">
-            {tracks.map((track, index) => <div className={`track-item ${index === currentTrackIndex ? 'active' : ''}`} key={track.id}><button type="button" className="track-select" onClick={() => selectTrack(index)}><span>{index + 1}</span><strong>{track.name}</strong><small>{index === currentTrackIndex && musicPlaying ? 'Playing' : 'Select track'}</small></button><button type="button" className={`set-reminder ${track.id === reminderTrack.id ? 'selected' : ''}`} aria-label={`Set ${track.name} as reminder ringtone`} aria-pressed={track.id === reminderTrack.id} onClick={() => setAsReminder(track)}>{track.id === reminderTrack.id ? 'Reminder' : 'Set reminder'}</button>{index > 1 && <button type="button" className="track-remove" aria-label={`Remove ${track.name}`} onClick={() => removeTrack(index)}><X size={15} /></button>}</div>)}
-          </div>
-        </section>}
+        {showSound && <SoundSettings audio={audioManager} sound={sound} onClose={closeContentView} sectionRef={soundDialogRef} />}
       </main>
       <nav className="mobile-bottom-nav" aria-label="Quick navigation">
         <a href="#timer" onClick={showTimer}><Home size={18} /><span>Home</span></a>
@@ -715,3 +545,11 @@ function App() {
 }
 
 createRoot(document.getElementById('root')).render(<App />);
+
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch((error) => {
+      console.error('[Blink] Service worker registration failed', error);
+    });
+  });
+}
