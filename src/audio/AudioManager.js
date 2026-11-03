@@ -13,9 +13,7 @@
 //
 // Every failure is logged with console.error so it is visible in chrome://inspect.
 
-import {
-  BUILT_IN_RINGTONES, RINGTONE_SECONDS, TONE_SAMPLE_RATE, encodeWav, isBuiltInRingtone, renderTone,
-} from './tones.js';
+import { BUILT_IN_RINGTONES, RINGTONE_SECONDS } from './ringtoneCatalog.js';
 
 export { BUILT_IN_RINGTONES, RINGTONE_SECONDS };
 export const CUSTOM_RINGTONE_ID = 'custom';
@@ -26,6 +24,26 @@ const RESUME_TIMEOUT_MS = 700;
 const FADE_OUT_SECONDS = 0.015;
 
 const clamp01 = (value) => Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
+function createSilentWav(sampleCount = 441) {
+  const buffer = new ArrayBuffer(44 + sampleCount * 2);
+  const view = new DataView(buffer);
+  const write = (offset, text) => {
+    for (let index = 0; index < text.length; index += 1) view.setUint8(offset + index, text.charCodeAt(index));
+  };
+  write(0, 'RIFF');
+  view.setUint32(4, 36 + sampleCount * 2, true);
+  write(8, 'WAVEfmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, 44100, true);
+  view.setUint32(28, 88200, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  write(36, 'data');
+  view.setUint32(40, sampleCount * 2, true);
+  return buffer;
+}
 const withTimeout = (promise, ms) => new Promise((resolve, reject) => {
   const timer = setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms);
   promise.then((value) => { clearTimeout(timer); resolve(value); }, (error) => { clearTimeout(timer); reject(error); });
@@ -151,7 +169,7 @@ export class AudioManager {
       // Synchronous part: must run inside the gesture handler.
       try { ctx.resume(); } catch (error) { console.warn(LOG, 'resume threw', error); }
       try {
-        const silent = ctx.createBuffer(1, 1, ctx.sampleRate || TONE_SAMPLE_RATE);
+        const silent = ctx.createBuffer(1, 1, ctx.sampleRate || 44100);
         const source = ctx.createBufferSource();
         source.buffer = silent;
         source.connect(ctx.destination);
@@ -170,7 +188,7 @@ export class AudioManager {
     const AudioCtor = this.win && this.win.Audio;
     if (!AudioCtor || this.htmlPrimed) return;
     try {
-      if (!this.silentUrl) this.silentUrl = this._blobUrl(encodeWav(new Float32Array(441)), 'audio/wav');
+      if (!this.silentUrl) this.silentUrl = this._blobUrl(createSilentWav(), 'audio/wav');
       const audio = new AudioCtor(this.silentUrl);
       audio.volume = 0;
       const played = audio.play();
@@ -265,6 +283,7 @@ export class AudioManager {
     if (this.buffers.has(desc.key)) return this.buffers.get(desc.key);
     let buffer;
     if (desc.tone) {
+      const { TONE_SAMPLE_RATE, renderTone } = await import('./tones.js');
       const samples = renderTone(desc.tone, TONE_SAMPLE_RATE);
       buffer = ctx.createBuffer(1, samples.length, TONE_SAMPLE_RATE);
       buffer.copyToChannel(samples, 0);
@@ -287,9 +306,12 @@ export class AudioManager {
     });
   }
 
-  _htmlUrlFor(desc) {
+  async _htmlUrlFor(desc) {
     if (desc.tone) {
-      if (!this.wavUrls.has(desc.tone)) this.wavUrls.set(desc.tone, this._blobUrl(encodeWav(renderTone(desc.tone)), 'audio/wav'));
+      if (!this.wavUrls.has(desc.tone)) {
+        const { encodeWav, renderTone } = await import('./tones.js');
+        this.wavUrls.set(desc.tone, this._blobUrl(encodeWav(renderTone(desc.tone)), 'audio/wav'));
+      }
       return this.wavUrls.get(desc.tone);
     }
     if (desc.blob) return this.customUrl;
@@ -303,7 +325,7 @@ export class AudioManager {
       console.warn(LOG, 'Custom ringtone selected but none is stored; using Gentle Chime');
       return { key: 'gentle-chime', tone: 'gentle-chime', id: 'gentle-chime' };
     }
-    if (isBuiltInRingtone(id)) return { key: id, tone: id, id };
+    if (BUILT_IN_RINGTONES.some((tone) => tone.id === id)) return { key: id, tone: id, id };
     return { key: 'gentle-chime', tone: 'gentle-chime', id: 'gentle-chime' };
   }
 
@@ -434,7 +456,7 @@ export class AudioManager {
 
   async _playHtml(token, { channel, desc, durationSec, offsetSec }, remaining) {
     const AudioCtor = this.win && this.win.Audio;
-    const url = this._htmlUrlFor(desc);
+    const url = await this._htmlUrlFor(desc);
     if (!AudioCtor || !url) throw new Error('HTMLAudio unavailable');
     const audio = new AudioCtor();
     audio.preload = 'auto';

@@ -1,11 +1,11 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Bell, BookOpen, ChevronLeft, ChevronDown, Coffee, Dumbbell, Eye, HelpCircle, Home, Pause, Play, RotateCcw, ShieldCheck, Smartphone, Sparkles, Square, Volume2 } from 'lucide-react';
 import './styles.css';
 import { audioManager } from './audio/AudioManager.js';
 import { FOCUS_SECONDS, REST_SECONDS, useRestTimer } from './audio/useRestTimer.js';
 import { useSoundSettings } from './audio/useSoundSettings.js';
-import SoundSettings from './audio/SoundSettings.jsx';
+const SoundSettings = lazy(() => import('./audio/SoundSettings.jsx'));
 
 function requestNotifications() {
   if ('Notification' in window && typeof Notification.requestPermission === 'function' && Notification.permission === 'default') {
@@ -531,7 +531,11 @@ function App() {
           </div>
         </section>}
         <button className={`drawer-backdrop ${showSound || showHelp || showJournal ? 'is-open' : ''}`} type="button" aria-hidden={!showSound && !showHelp && !showJournal} tabIndex={(showSound || showHelp || showJournal) ? 0 : -1} aria-label="Close panel" onClick={closeContentView} />
-        {showSound && <SoundSettings audio={audioManager} sound={sound} onClose={closeContentView} sectionRef={soundDialogRef} />}
+        {showSound && (
+          <Suspense fallback={null}>
+            <SoundSettings audio={audioManager} sound={sound} onClose={closeContentView} sectionRef={soundDialogRef} />
+          </Suspense>
+        )}
       </main>
       <nav className="mobile-bottom-nav" aria-label="Quick navigation">
         <a href="#timer" onClick={showTimer}><Home size={18} /><span>Home</span></a>
