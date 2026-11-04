@@ -78,3 +78,7 @@ and battery optimization restrictions may still vary by device manufacturer.
 
 The foreground service and notification controls require real-device testing; the Gradle build and
 screen-off behavior must be verified on the target Android version before distributing a release APK.
+
+If Gradle reports `SDK location not found`, install Android Studio and the Android SDK, then set
+`ANDROID_HOME=$HOME/Library/Android/sdk` (or configure the SDK path in Android Studio). The project
+intentionally does not commit `android/local.properties` because that path is machine-specific.

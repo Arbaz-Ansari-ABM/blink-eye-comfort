@@ -20,7 +20,11 @@ public class BlinkTimerPlugin extends Plugin {
         intent.putExtra("endsAt", call.getLong("endsAt", 0L));
         intent.putExtra("secondsLeft", call.getInt("secondsLeft", 0));
         intent.putExtra("completed", call.getInt("completed", 0));
-        getContext().startForegroundService(intent);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            getContext().startForegroundService(intent);
+        } else {
+            getContext().startService(intent);
+        }
         call.resolve();
     }
 

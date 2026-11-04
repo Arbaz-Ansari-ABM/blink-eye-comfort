@@ -19,6 +19,7 @@ public class BlinkTimerService extends Service {
     static final String ACTION_PAUSE = "com.blink.eyecare.PAUSE";
     static final String ACTION_RESUME = "com.blink.eyecare.RESUME";
     static final String ACTION_STOP = "com.blink.eyecare.STOP";
+    static final String ACTION_OPEN = "com.blink.eyecare.OPEN";
     private final Handler handler = new Handler();
     private android.content.SharedPreferences prefs;
 
@@ -92,6 +93,13 @@ public class BlinkTimerService extends Service {
     }
 
     private PendingIntent action(String action) {
+        if (ACTION_OPEN.equals(action)) {
+            Intent intent = new Intent(this, MainActivity.class)
+                .setAction(Intent.ACTION_MAIN)
+                .addCategory(Intent.CATEGORY_LAUNCHER)
+                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            return PendingIntent.getActivity(this, action.hashCode(), intent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        }
         Intent intent = new Intent(this, BlinkTimerActionReceiver.class).setAction(action);
         return PendingIntent.getBroadcast(this, action.hashCode(), intent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
     }
@@ -105,6 +113,7 @@ public class BlinkTimerService extends Service {
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(com.blink.eyecare.R.mipmap.ic_launcher)
             .setContentTitle(title).setContentText(time)
+            .setContentIntent(action(ACTION_OPEN))
             .setOngoing(true).setOnlyAlertOnce(true).setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .addAction(new NotificationCompat.Action(0, paused ? "Resume" : "Pause", action(paused ? ACTION_RESUME : ACTION_PAUSE)))
