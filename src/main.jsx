@@ -19,7 +19,13 @@ function requestNotifications() {
 
 function notify(title, body) {
   if ('Notification' in window && Notification.permission === 'granted') {
-    new Notification(title, { body });
+    new Notification(title, {
+      body,
+      silent: false,
+      renotify: true,
+      requireInteraction: true,
+      tag: 'blink-break-alert',
+    });
   }
 }
 
@@ -206,6 +212,7 @@ function App() {
   const handleStart = () => {
     requestNotifications();
     BlinkTimer.requestNotificationPermission?.().catch(() => {});
+    audioManager.armForAlerts?.();
     start();
   };
   const duration = isRest ? REST_SECONDS : FOCUS_SECONDS;

@@ -121,6 +121,16 @@ export class AudioManager {
     if (needsWork) this.unlock();
   }
 
+  /**
+   * Audio is armed by the first user interaction, before a timer alert happens.
+   * This avoids asking the user to click the break overlay later. Browsers still
+   * require at least one prior gesture by design.
+   */
+  armForAlerts() {
+    if (this.disposed) return Promise.resolve(false);
+    return this.unlock();
+  }
+
   _onVisibility() {
     const doc = this.win && this.win.document;
     if (!doc || doc.visibilityState !== 'visible' || !this.ctx) return;
