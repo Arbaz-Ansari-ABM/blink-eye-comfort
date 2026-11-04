@@ -1,6 +1,6 @@
 import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Bell, BookOpen, ChevronLeft, ChevronDown, Coffee, Dumbbell, Eye, HelpCircle, Home, Pause, Play, RotateCcw, ShieldCheck, Smartphone, Sparkles, Square, Volume2 } from 'lucide-react';
+import { Bell, BookOpen, BarChart3, ChevronLeft, ChevronDown, Coffee, Download, Eye, HelpCircle, Home, Pause, Play, RotateCcw, Settings, ShieldCheck, Smartphone, Sparkles, Square, Volume2 } from 'lucide-react';
 import './styles.css';
 import { audioManager } from './audio/AudioManager.js';
 import { FOCUS_SECONDS, REST_SECONDS, useRestTimer } from './audio/useRestTimer.js';
@@ -33,6 +33,64 @@ function getFocusableElements(container) {
   ) || []).filter((element) => element.getClientRects().length > 0);
 }
 
+const SETTINGS_KEY = 'blink-working-settings';
+const DEFAULT_WORK_SETTINGS = {
+  enabled: true, autoPause: true, start: '09:00', end: '18:00',
+  quietStart: '13:00', quietEnd: '14:00', days: [1, 2, 3, 4, 5],
+};
+
+function readWorkSettings() {
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(SETTINGS_KEY));
+    return { ...DEFAULT_WORK_SETTINGS, ...(saved || {}) };
+  } catch { return DEFAULT_WORK_SETTINGS; }
+}
+
+function minutesOf(value) { const [hours, minutes] = String(value).split(':').map(Number); return hours * 60 + minutes; }
+function inWindow(now, start, end) {
+  const current = now.getHours() * 60 + now.getMinutes();
+  const from = minutesOf(start); const to = minutesOf(end);
+  return from <= to ? current >= from && current < to : current >= from || current < to;
+}
+function isWorkingTime(settings, now = new Date()) {
+  const day = now.getDay();
+  if (!settings.days.includes(day)) return false;
+  return inWindow(now, settings.start, settings.end) && !inWindow(now, settings.quietStart, settings.quietEnd);
+}
+
+function WeeklyStats({ daily = {}, completed = 0 }) {
+  const today = new Date();
+  const monday = new Date(today);
+  const offset = (today.getDay() + 6) % 7;
+  monday.setDate(today.getDate() - offset);
+  const days = Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(monday); date.setDate(monday.getDate() + index);
+    return { label: date.toLocaleDateString([], { weekday: 'short' }), count: daily[date.toISOString().slice(0, 10)] || 0 };
+  });
+  const total = days.reduce((sum, day) => sum + day.count, 0);
+  const max = Math.max(1, ...days.map((day) => day.count));
+  const streak = days.slice().reverse().reduce((count, day) => count + (day.count ? 1 : 0), 0);
+  return <section className="stats-panel" aria-labelledby="stats-title">
+    <div className="panel-heading"><div><p className="eyebrow">This week</p><h2 id="stats-title">Your eye-care rhythm</h2></div><BarChart3 size={22} aria-hidden="true" /></div>
+    <div className="stats-summary"><div><strong>{completed}</strong><span>all-time breaks</span></div><div><strong>{total}</strong><span>this week</span></div><div><strong>{streak}</strong><span>day streak</span></div></div>
+    <div className="bar-chart" aria-label="Completed breaks Monday to Sunday">
+      {days.map((day) => <div className="bar-column" key={day.label}><span className="bar-value">{day.count || ''}</span><div className="bar-track"><i style={{ height: `${Math.max(5, day.count / max * 100)}%` }} /></div><small>{day.label}</small></div>)}
+    </div>
+  </section>;
+}
+
+function WorkSettings({ settings, onChange, onClose }) {
+  const toggleDay = (day) => onChange({ days: settings.days.includes(day) ? settings.days.filter((item) => item !== day) : [...settings.days, day].sort() });
+  return <section className="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+    <div className="panel-heading"><div><p className="eyebrow">Personal rhythm</p><h2 id="settings-title">Working hours</h2></div><button className="ss-close" type="button" onClick={onClose} aria-label="Close settings">×</button></div>
+    <p className="settings-copy">Blink will only remind you during your chosen work window. Quiet hours can cross midnight.</p>
+    <label className="settings-switch"><span><strong>Working schedule</strong><small>Pause reminders outside your schedule</small></span><input type="checkbox" checked={settings.enabled} onChange={(event) => onChange({ enabled: event.target.checked })} /></label>
+    <label className="settings-switch"><span><strong>Automatic pause / resume</strong><small>Apply schedule changes to the active timer</small></span><input type="checkbox" checked={settings.autoPause} onChange={(event) => onChange({ autoPause: event.target.checked })} /></label>
+    <div className="time-grid"><label>Work starts<input type="time" value={settings.start} onChange={(event) => onChange({ start: event.target.value })} /></label><label>Work ends<input type="time" value={settings.end} onChange={(event) => onChange({ end: event.target.value })} /></label><label>Quiet starts<input type="time" value={settings.quietStart} onChange={(event) => onChange({ quietStart: event.target.value })} /></label><label>Quiet ends<input type="time" value={settings.quietEnd} onChange={(event) => onChange({ quietEnd: event.target.value })} /></label></div>
+    <fieldset className="day-picker"><legend>Working days</legend>{[['M',1],['T',2],['W',3],['T',4],['F',5],['S',6],['S',0]].map(([label, day]) => <button key={`${label}-${day}`} type="button" className={settings.days.includes(day) ? 'selected' : ''} onClick={() => toggleDay(day)} aria-pressed={settings.days.includes(day)}>{label}</button>)}</fieldset>
+  </section>;
+}
+
 function App() {
   const sound = useSoundSettings(audioManager);
   const audioState = useSyncExternalStore(audioManager.subscribe, audioManager.getSnapshot);
@@ -40,6 +98,10 @@ function App() {
   const [showHelp, setShowHelp] = useState(false);
   const [showJournal, setShowJournal] = useState(false);
   const [showSound, setShowSound] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [workSettings, setWorkSettings] = useState(readWorkSettings);
+  const [installPrompt, setInstallPrompt] = useState(null);
+  const schedulePausedRef = useRef(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const alertRef = useRef(null);
   const restDialogRef = useRef(null);
@@ -57,20 +119,51 @@ function App() {
     if (type === 'started') setNotice('Blink is running. We’ll nudge you when it’s time to look away.');
     if (type === 'resumed') setNotice('Session resumed.');
     if (type === 'paused') setNotice('Session paused. Your next focus cycle is ready to begin.');
-    if (type === 'reset') setNotice('Timer reset.');
+    if (type === 'reset' || type === 'paused') {
+      if (navigator.vibrate) navigator.vibrate(0);
+    }
     if (type === 'focus-complete') {
       setNotice('Focus complete. Time to let your eyes travel across the room.');
+      if (navigator.vibrate) navigator.vibrate([180, 90, 180]);
       notify('Time to rest your eyes', 'Look 20 feet away for 20 seconds.');
     }
     if (type === 'rest-complete') {
+      if (navigator.vibrate) navigator.vibrate(0);
       setNotice('Rest complete. A fresh focus rhythm has begun.');
       notify('Focus time resumed', 'Your eyes are ready for another 20-minute cycle.');
     }
   }, []);
 
   const {
-    phase, secondsLeft, completed, lastRest, screenTime, isRunning, isRest, start, pause, reset,
+    phase, pausedFrom, secondsLeft, completed, daily, lastRest, screenTime, isRunning, isRest, start, pause, reset,
   } = useRestTimer({ audio: audioManager, onEvent: handleTimerEvent });
+  const restOverlayActive = isRest || (phase === 'paused' && pausedFrom === 'rest');
+
+  useEffect(() => {
+    try { window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(workSettings)); } catch (error) { console.warn('[Blink] settings could not be saved', error); }
+  }, [workSettings]);
+
+  useEffect(() => {
+    const handler = (event) => { event.preventDefault(); setInstallPrompt(event); };
+    window.addEventListener('beforeinstallprompt', handler);
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
+
+  useEffect(() => {
+    if (!workSettings.enabled || !workSettings.autoPause) return undefined;
+    const check = () => {
+      if (!isWorkingTime(workSettings) && isRunning) {
+        schedulePausedRef.current = true;
+        pause();
+      } else if (isWorkingTime(workSettings) && phase === 'paused' && schedulePausedRef.current) {
+        schedulePausedRef.current = false;
+        start();
+      }
+    };
+    check();
+    const timer = window.setInterval(check, 30_000);
+    return () => window.clearInterval(timer);
+  }, [workSettings, isRunning, phase, pause, start]);
 
   const handleStart = () => { requestNotifications(); start(); };
   const duration = isRest ? REST_SECONDS : FOCUS_SECONDS;
@@ -94,7 +187,7 @@ function App() {
   }, [audioState.blocked]);
 
   useEffect(() => {
-    if (!isRest) {
+    if (!restOverlayActive) {
       const returnFocus = restReturnFocusRef.current;
       if (returnFocus && typeof returnFocus.focus === 'function') returnFocus.focus();
       restReturnFocusRef.current = null;
@@ -112,7 +205,7 @@ function App() {
       window.cancelAnimationFrame(focusFrame);
       document.removeEventListener('keydown', trapFocus);
     };
-  }, [isRest]);
+  }, [restOverlayActive]);
 
   useEffect(() => {
     if (!mobileMenuOpen) return undefined;
@@ -273,7 +366,7 @@ function App() {
   }, [showJournal]);
 
   useEffect(() => {
-    document.body.classList.toggle('menu-open', mobileMenuOpen || showSound || showHelp || showJournal);
+    document.body.classList.toggle('menu-open', mobileMenuOpen || showSound || showHelp || showJournal || showSettings);
     return () => {
       document.body.classList.remove('menu-open');
     };
@@ -343,7 +436,8 @@ function App() {
         <div className="header-actions">
           <button className={`icon-button sound-icon-button ${showSound ? 'active' : ''}`} aria-label="Open sound settings" title="Sound settings" onClick={() => { setShowSound((value) => !value); setShowHelp(false); setShowJournal(false); }}><Volume2 size={18} /></button>
           <button className={`icon-button ${showHelp ? 'active' : ''}`} aria-label="Open how Blink works" title="How Blink works" onClick={() => { setShowHelp((value) => !value); setShowJournal(false); setShowSound(false); }}><HelpCircle size={18} /></button>
-          <button className={`icon-button eye-icon-button ${showJournal ? 'active' : ''}`} aria-label="Open eye comfort journal" title="Eye comfort journal" onClick={() => { setShowJournal((value) => !value); setShowHelp(false); setShowSound(false); }}><span className="iris-mark"><Eye size={19} /></span></button>
+          <button className={`icon-button eye-icon-button ${showJournal ? 'active' : ''}`} aria-label="Open eye comfort journal" title="Eye comfort journal" onClick={() => { setShowJournal((value) => !value); setShowHelp(false); setShowSound(false); setShowSettings(false); }}><span className="iris-mark"><Eye size={19} /></span></button>
+          <button className={`icon-button ${showSettings ? 'active' : ''}`} aria-label="Open working hours settings" title="Working hours" onClick={() => { setShowSettings((value) => !value); setShowHelp(false); setShowJournal(false); setShowSound(false); }}><Settings size={18} /></button>
         </div>
       </header>
       <nav id="mobile-navigation" className={`mobile-nav ${mobileMenuOpen ? 'is-open' : ''}`} aria-label="Mobile navigation" aria-hidden={!mobileMenuOpen}>
@@ -372,18 +466,19 @@ function App() {
         </section>
 
         {notice && <div className="live-notice" role="status" aria-live="polite" tabIndex="-1" ref={alertRef}><Sparkles size={16} />{notice}</div>}
-        {isRest && <div className="rest-overlay" role="alertdialog" aria-modal="true" aria-labelledby="rest-title" aria-describedby="rest-description">
+        {restOverlayActive && <div className="rest-overlay" role="alertdialog" aria-modal="true" aria-labelledby="rest-title" aria-describedby="rest-description">
           <div className="rest-overlay-card" ref={restDialogRef} tabIndex="-1">
             <div className="rest-overlay-eye" aria-hidden="true"><Eye size={42} /></div>
             <p className="eyebrow">20-second eye reset</p>
             <h2 id="rest-title">Look 20 meters away.</h2>
             <p id="rest-description">Let your gaze leave the screen. Soften your eyes, blink slowly, and look at something across the room.</p>
-            <div className="rest-countdown"><strong>{formatTime(secondsLeft)}</strong><span>remaining</span></div>
+            <div className="rest-countdown"><strong>{formatTime(secondsLeft)}</strong><span>{isRest ? 'remaining' : 'paused'}</span></div>
+            <div className="rest-overlay-actions"><button type="button" className="primary-button" onClick={isRest ? pause : start}>{isRest ? <><Pause size={17} /> Pause</> : <><Play size={17} /> Resume</>}</button></div>
             <p className="rest-overlay-note">Your focus session will continue automatically.</p>
           </div>
         </div>}
 
-        {!showJournal && !showHelp && !showSound && (
+        {!showJournal && !showHelp && !showSound && !showSettings && (
           <>
             <section id="timer" className="dashboard-grid">
           <article className={`timer-card ${isRest ? 'timer-card-rest' : ''}`}>
@@ -446,8 +541,10 @@ function App() {
             </div>
           </aside>
         </section>
+        <WeeklyStats daily={daily} completed={completed} />
           </>
         )}
+        {showSettings && <WorkSettings settings={workSettings} onChange={(patch) => setWorkSettings((current) => ({ ...current, ...patch }))} onClose={() => setShowSettings(false)} />}
 
         {/* The hero callout scrolls here to explain the installable PWA. */}
         {!showJournal && !showHelp && !showSound && (
@@ -530,7 +627,7 @@ function App() {
             <article className="journal-card coral-card"><p className="eyebrow">03 / Repeat</p><h3>Return refreshed</h3><p>Your next focus cycle starts automatically after the rest period, so healthy pauses become part of your day.</p></article>
           </div>
         </section>}
-        <button className={`drawer-backdrop ${showSound || showHelp || showJournal ? 'is-open' : ''}`} type="button" aria-hidden={!showSound && !showHelp && !showJournal} tabIndex={(showSound || showHelp || showJournal) ? 0 : -1} aria-label="Close panel" onClick={closeContentView} />
+        <button className={`drawer-backdrop ${showSound || showHelp || showJournal || showSettings ? 'is-open' : ''}`} type="button" aria-hidden={!showSound && !showHelp && !showJournal && !showSettings} tabIndex={(showSound || showHelp || showJournal || showSettings) ? 0 : -1} aria-label="Close panel" onClick={() => { closeContentView(); setShowSettings(false); }} />
         {showSound && (
           <Suspense fallback={null}>
             <SoundSettings audio={audioManager} sound={sound} onClose={closeContentView} sectionRef={soundDialogRef} />
@@ -543,7 +640,7 @@ function App() {
         <button type="button" onClick={() => { setShowHelp(true); setShowJournal(false); setShowSound(false); }}><HelpCircle size={18} /><span>Learn</span></button>
       </nav>
 
-      {!showJournal && !showHelp && !showSound && <footer><span>Made for the long-haul screen days. · Developed by Arbaz Ahmad Ansari · © 2026 Blink.</span></footer>}
+      {!showJournal && !showHelp && !showSound && !showSettings && <footer><span>Made for the long-haul screen days. · Developed by Arbaz Ahmad Ansari · © 2026 Blink.</span>{installPrompt && <button className="install-button" type="button" onClick={async () => { installPrompt.prompt(); await installPrompt.userChoice; setInstallPrompt(null); }}><Download size={15} /> Install Blink</button>}</footer>}
     </div>
   );
 }
