@@ -57,8 +57,24 @@ and background execution are browser/device capabilities and should be tested on
 
 ## Android packaging
 
-This repository currently ships the existing `public/Blink.apk` artifact and a standards-based PWA; it
-does not yet contain a Capacitor Android project or a native foreground service. The web timer is
-timestamp-based and restores safely after Android lifecycle suspension, but a persistent Android
-notification with native Pause/Resume/Stop controls must not be claimed until a Capacitor native
-implementation has been added and tested on a physical Android device.
+The project now includes a Capacitor Android wrapper with a native foreground timer service. In the
+installed Android app, starting Blink requests notification permission and keeps a persistent
+notification with **Pause/Resume** and **Stop** controls while the screen is off. The native service
+uses the same timestamp-based phases and the web UI synchronizes with native actions when it returns
+to the foreground.
+
+Build the Android debug APK:
+
+```bash
+npm run build
+npx cap sync android
+cd android
+./gradlew assembleDebug
+```
+
+The APK is written to `android/app/build/outputs/apk/debug/app-debug.apk`. Open the `android/` project
+in Android Studio for signing and release builds. Android 13+ notification permission must be accepted,
+and battery optimization restrictions may still vary by device manufacturer.
+
+The foreground service and notification controls require real-device testing; the Gradle build and
+screen-off behavior must be verified on the target Android version before distributing a release APK.

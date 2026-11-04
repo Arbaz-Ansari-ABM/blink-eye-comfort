@@ -5,7 +5,9 @@ import './styles.css';
 import { audioManager } from './audio/AudioManager.js';
 import { FOCUS_SECONDS, REST_SECONDS, useRestTimer } from './audio/useRestTimer.js';
 import { useSoundSettings } from './audio/useSoundSettings.js';
+import { registerPlugin } from '@capacitor/core';
 const SoundSettings = lazy(() => import('./audio/SoundSettings.jsx'));
+const BlinkTimer = registerPlugin('BlinkTimer');
 
 function requestNotifications() {
   if ('Notification' in window && typeof Notification.requestPermission === 'function' && Notification.permission === 'default') {
@@ -135,7 +137,7 @@ function App() {
   }, []);
 
   const {
-    phase, pausedFrom, secondsLeft, completed, daily, lastRest, screenTime, isRunning, isRest, start, pause, reset,
+    phase, pausedFrom, secondsLeft, completed, daily, lastRest, screenTime, endsAt, isRunning, isRest, start, pause, reset,
   } = useRestTimer({ audio: audioManager, onEvent: handleTimerEvent });
   const restOverlayActive = isRest || (phase === 'paused' && pausedFrom === 'rest');
 
@@ -165,7 +167,47 @@ function App() {
     return () => window.clearInterval(timer);
   }, [workSettings, isRunning, phase, pause, start]);
 
-  const handleStart = () => { requestNotifications(); start(); };
+  useEffect(() => {
+    const nativeSync = async () => {
+      try {
+        if (phase === 'stopped') {
+          await BlinkTimer.stop?.();
+          return;
+        }
+        await BlinkTimer.sync?.({ phase, endsAt: endsAt || 0, secondsLeft, completed });
+      } catch (error) {
+        if (!String(error?.message || error).toLowerCase().includes('not implemented')) {
+          console.warn('[Blink] native timer sync failed', error);
+        }
+      }
+    };
+    nativeSync();
+  }, [phase, endsAt, completed]);
+
+  useEffect(() => {
+    const syncFromNative = async () => {
+      try {
+        const native = await BlinkTimer.getState?.();
+        if (!native?.phase) return;
+        if (native.phase === 'paused' && isRunning) pause();
+        if ((native.phase === 'focus' || native.phase === 'rest') && phase === 'paused') start();
+        if (native.phase === 'stopped' && phase !== 'stopped') reset();
+      } catch (error) {
+        if (!String(error?.message || error).toLowerCase().includes('not implemented')) {
+          console.warn('[Blink] native timer state read failed', error);
+        }
+      }
+    };
+    const onVisible = () => { if (document.visibilityState === 'visible') syncFromNative(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [isRunning, phase, pause, reset, start]);
+
+  const handleStart = () => {
+    requestNotifications();
+    BlinkTimer.requestNotificationPermission?.().catch(() => {});
+    start();
+  };
   const duration = isRest ? REST_SECONDS : FOCUS_SECONDS;
   const progress = Math.max(0, Math.min(1, 1 - secondsLeft / duration));
   const circumference = 2 * Math.PI * 142;

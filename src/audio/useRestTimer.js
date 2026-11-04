@@ -96,6 +96,7 @@ export function useRestTimer({ audio, onEvent }) {
   }, [audio, commit, emit]);
 
   const isRunning = state.phase === 'focus' || state.phase === 'rest';
+  const isRest = state.phase === 'rest';
 
   useEffect(() => {
     if (!isRunning) return undefined;

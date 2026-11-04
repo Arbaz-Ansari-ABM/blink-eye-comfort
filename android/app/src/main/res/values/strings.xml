@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Blink</string>
+    <string name="title_activity_main">Blink</string>
+    <string name="package_name">com.blink.eyecare</string>
+    <string name="custom_url_scheme">com.blink.eyecare</string>
+</resources>
