@@ -5,7 +5,6 @@ export const REST_SECONDS = 20;
 const STORAGE_KEY = 'blink-timer-state';
 const TICK_MS = 250;
 const AWAY_RESET_MS = 5 * 60 * 1000;
-const HIDDEN_PAUSE_DELAY_MS = 5000;
 
 const dayKey = (timestamp) => new Date(timestamp).toISOString().slice(0, 10);
 const emptyDaily = () => ({});
@@ -58,7 +57,6 @@ export function useRestTimer({ audio, onEvent, pauseWhenHidden = true }) {
   const stateRef = useRef(state);
   const handledRef = useRef(null);
   const wakeLockRef = useRef(null);
-  const hiddenPauseTimerRef = useRef(null);
   const lastTickAtRef = useRef(typeof performance !== 'undefined' ? performance.now() : Date.now());
   const eventRef = useRef(onEvent);
   eventRef.current = onEvent;
@@ -115,14 +113,10 @@ export function useRestTimer({ audio, onEvent, pauseWhenHidden = true }) {
     const timer = isRunning ? window.setInterval(tick, TICK_MS) : null;
     const onVisible = () => {
       if (document.visibilityState !== 'visible') return;
-      if (hiddenPauseTimerRef.current) {
-        window.clearTimeout(hiddenPauseTimerRef.current);
-        hiddenPauseTimerRef.current = null;
-      }
       const current = stateRef.current;
       const now = Date.now();
       const awayFor = now - (current.pausedAt || current.lastActiveAt || now);
-      if (current.hiddenPaused && awayFor >= AWAY_RESET_MS) {
+      if (current.hiddenPaused && current.resumeOnLaunch && awayFor >= AWAY_RESET_MS) {
         audio.stopAll();
         handledRef.current = null;
         commit({
@@ -131,7 +125,7 @@ export function useRestTimer({ audio, onEvent, pauseWhenHidden = true }) {
           breakStartAt: null, lastActiveAt: now, hiddenPaused: false, resumeOnLaunch: false,
         });
         emit('reset');
-      } else if (current.hiddenPaused) {
+      } else if (current.hiddenPaused && current.resumeOnLaunch) {
         const phase = current.pausedFrom || 'focus';
         const remaining = Math.max(1, current.secondsLeft);
         commit({
@@ -143,6 +137,9 @@ export function useRestTimer({ audio, onEvent, pauseWhenHidden = true }) {
           audio.startRestTune({ totalSec: REST_SECONDS, elapsedSec: REST_SECONDS - remaining });
         }
         emit('resumed');
+      } else if (current.hiddenPaused) {
+        audio.stopAll();
+        emit('paused');
       } else {
         commit({ lastActiveAt: Date.now(), resumeOnLaunch: false });
         tick();
@@ -152,30 +149,25 @@ export function useRestTimer({ audio, onEvent, pauseWhenHidden = true }) {
       if (document.visibilityState !== 'hidden') return;
       const current = stateRef.current;
       if (!pauseWhenHidden || (current.phase !== 'focus' && current.phase !== 'rest')) return;
-      if (hiddenPauseTimerRef.current) window.clearTimeout(hiddenPauseTimerRef.current);
-      hiddenPauseTimerRef.current = window.setTimeout(() => {
-        hiddenPauseTimerRef.current = null;
-        if (document.visibilityState !== 'hidden') return;
-        const latest = stateRef.current;
-        if (latest.phase !== 'focus' && latest.phase !== 'rest') return;
-        const now = Date.now();
-        const remaining = Math.max(1, Math.ceil((latest.endsAt - now) / 1000));
-        audio.stopAll();
-        commit({
-          phase: 'paused', pausedFrom: latest.phase, pausedAt: now, secondsLeft: remaining,
-          endsAt: null, hiddenPaused: true, resumeOnLaunch: false, lastActiveAt: now,
-        });
-        emit('paused');
-      }, HIDDEN_PAUSE_DELAY_MS);
+      const now = Date.now();
+      const remaining = Math.max(1, Math.ceil((current.endsAt - now) / 1000));
+      audio.stopAll();
+      commit({
+        phase: 'paused', pausedFrom: current.phase, pausedAt: now, secondsLeft: remaining,
+        endsAt: null, hiddenPaused: true, resumeOnLaunch: false, lastActiveAt: now,
+      });
+      emit('paused');
     };
     const onPageHide = () => {
       const current = stateRef.current;
       if (!pauseWhenHidden || (current.phase !== 'focus' && current.phase !== 'rest')) return;
-      if (hiddenPauseTimerRef.current) {
-        window.clearTimeout(hiddenPauseTimerRef.current);
-        hiddenPauseTimerRef.current = null;
+      const now = Date.now();
+      const latest = stateRef.current;
+      if (latest.phase === 'focus' || latest.phase === 'rest') {
+        commit({ lastActiveAt: now, resumeOnLaunch: true });
+      } else if (latest.phase === 'paused' && latest.hiddenPaused) {
+        commit({ lastActiveAt: now, resumeOnLaunch: true });
       }
-      commit({ lastActiveAt: Date.now(), resumeOnLaunch: true });
     };
     document.addEventListener('visibilitychange', onVisible);
     document.addEventListener('visibilitychange', onHidden);
@@ -184,7 +176,6 @@ export function useRestTimer({ audio, onEvent, pauseWhenHidden = true }) {
     if (document.visibilityState === 'visible') onVisible();
     return () => {
       window.clearInterval(timer);
-      if (hiddenPauseTimerRef.current) window.clearTimeout(hiddenPauseTimerRef.current);
       document.removeEventListener('visibilitychange', onVisible);
       document.removeEventListener('visibilitychange', onHidden);
       window.removeEventListener('pagehide', onPageHide);
