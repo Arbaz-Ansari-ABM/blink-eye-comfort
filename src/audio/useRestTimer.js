@@ -4,7 +4,6 @@ export const FOCUS_SECONDS = 20 * 60;
 export const REST_SECONDS = 20;
 const STORAGE_KEY = 'blink-timer-state';
 const TICK_MS = 250;
-const STALE_MS = 5000;
 const AWAY_RESET_MS = 5 * 60 * 1000;
 
 const dayKey = (timestamp) => new Date(timestamp).toISOString().slice(0, 10);
@@ -24,16 +23,20 @@ function loadInitial(now = Date.now()) {
   const state = { ...base };
   Object.keys(base).forEach((key) => { if (saved[key] !== undefined && saved[key] !== null) state[key] = saved[key]; });
   if (!['stopped', 'focus', 'rest', 'paused'].includes(state.phase)) return base;
+  if (state.phase === 'focus' || state.phase === 'rest') {
+    const awayFor = now - (state.lastActiveAt || now);
+    if (awayFor >= AWAY_RESET_MS) {
+      return { ...base, completed: state.completed, totalCompletedBreaks: state.totalCompletedBreaks, lastRest: state.lastRest, daily: state.daily, weekly: state.weekly };
+    }
+    state.pausedFrom = state.phase;
+    state.phase = 'paused';
+    state.pausedAt = now;
+    state.endsAt = null;
+    state.hiddenPaused = true;
+    state.secondsLeft = Math.max(1, state.secondsLeft);
+  }
   if (state.hiddenPaused && state.pausedAt && now - state.pausedAt >= AWAY_RESET_MS) {
     return { ...base, completed: state.completed, totalCompletedBreaks: state.totalCompletedBreaks, lastRest: state.lastRest, daily: state.daily, weekly: state.weekly };
-  }
-  if (state.phase === 'focus' || state.phase === 'rest') {
-    if (!state.endsAt) state.endsAt = now + Math.max(state.secondsLeft, 1) * 1000;
-    if (state.endsAt < now - STALE_MS) {
-      // The page was closed through the end of the phase. Do not ring on app open; wait for the user.
-      state.phase = 'paused'; state.pausedFrom = 'focus'; state.secondsLeft = FOCUS_SECONDS;
-      state.endsAt = null; state.pausedAt = now;
-    }
   }
   if (state.phase === 'paused' && !state.pausedFrom) state.pausedFrom = 'focus';
   if (!state.daily || typeof state.daily !== 'object') state.daily = emptyDaily();
@@ -78,7 +81,7 @@ export function useRestTimer({ audio, onEvent, pauseWhenHidden = true }) {
     const screenTime = s.startedAt ? Math.max(0, Math.floor((now - s.startedAt) / 1000)) : s.screenTime;
     if (remainingMs > 0) {
       const secondsLeft = Math.ceil(remainingMs / 1000);
-      if (secondsLeft !== s.secondsLeft || screenTime !== s.screenTime) commit({ secondsLeft, screenTime });
+      if (secondsLeft !== s.secondsLeft || screenTime !== s.screenTime) commit({ secondsLeft, screenTime, lastActiveAt: now });
       return;
     }
     if (handledRef.current === s.endsAt) return; // already handled this phase end
@@ -159,6 +162,7 @@ export function useRestTimer({ audio, onEvent, pauseWhenHidden = true }) {
     document.addEventListener('visibilitychange', onHidden);
     window.addEventListener('pagehide', onPageHide);
     window.addEventListener('pageshow', onVisible);
+    if (document.visibilityState === 'visible') onVisible();
     return () => {
       window.clearInterval(timer);
       document.removeEventListener('visibilitychange', onVisible);
