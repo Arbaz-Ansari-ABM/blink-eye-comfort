@@ -819,6 +819,7 @@ function App() {
         <a href="#timer" onClick={showTimer}><Home size={18} /><span>Home</span></a>
         <button type="button" onClick={() => { setShowJournal(true); setShowHelp(false); setShowSound(false); }}><BookOpen size={18} /><span>Journal</span></button>
         <button type="button" onClick={() => { setShowHelp(true); setShowJournal(false); setShowSound(false); }}><HelpCircle size={18} /><span>Learn</span></button>
+        <button type="button" onClick={() => { setShowSettings(true); setShowJournal(false); setShowHelp(false); setShowSound(false); }}><Settings size={18} /><span>Hours</span></button>
       </nav>
 
       {!showJournal && !showHelp && !showSound && !showSettings && <footer className="site-footer">
