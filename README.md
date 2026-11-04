@@ -17,6 +17,8 @@ Built for developers, designers, and anyone glued to a display, Blink automates 
 - **Working hours** — Configure working days, working hours, overnight-safe quiet hours, and automatic pause/resume from the Working hours panel.
 - **Weekly dashboard** — Review Monday-to-Sunday break consistency with locally persisted activity.
 - **Wake lock and device alerts** — Rest mode requests Screen Wake Lock where supported and uses sound, vibration, and accessible visual controls with graceful fallbacks.
+- **Screen-aware timer** — Pauses while the tab is hidden by default, resumes when visible, and starts a fresh focus cycle after a five-minute absence.
+- **Break music controls** — The selected calm built-in tone plays during the 20-second break, with a persisted mute control and keyboard shortcut.
 ---
  
 ## 🚀 Getting Started
@@ -55,35 +57,7 @@ The install prompt is shown by supported Chromium browsers after the app meets t
 criteria. On iOS Safari, use **Share → Add to Home Screen**. Screen Wake Lock, vibration, notifications,
 and background execution are browser/device capabilities and should be tested on the target device.
 
-On supported browsers, break notifications are delivered through the service worker and expose Pause,
-Resume, and Stop actions. This improves control while the PWA is backgrounded, but a web PWA cannot
-guarantee continuous JavaScript execution while the OS has fully suspended or killed the browser.
-The timer therefore remains timestamp-based and reconciles its state when the app becomes active again.
-
-## Android packaging
-
-The project now includes a Capacitor Android wrapper with a native foreground timer service. In the
-installed Android app, starting Blink requests notification permission and keeps a persistent
-notification with **Pause/Resume** and **Stop** controls while the screen is off. The native service
-uses the same timestamp-based phases and the web UI synchronizes with native actions when it returns
-to the foreground.
-
-Build the Android debug APK:
-
-```bash
-npm run build
-npx cap sync android
-cd android
-./gradlew assembleDebug
-```
-
-The APK is written to `android/app/build/outputs/apk/debug/app-debug.apk`. Open the `android/` project
-in Android Studio for signing and release builds. Android 13+ notification permission must be accepted,
-and battery optimization restrictions may still vary by device manufacturer.
-
-The foreground service and notification controls require real-device testing; the Gradle build and
-screen-off behavior must be verified on the target Android version before distributing a release APK.
-
-If Gradle reports `SDK location not found`, install Android Studio and the Android SDK, then set
-`ANDROID_HOME=$HOME/Library/Android/sdk` (or configure the SDK path in Android Studio). The project
-intentionally does not commit `android/local.properties` because that path is machine-specific.
+Blink is intentionally web/PWA-only. When “Pause when tab is hidden” is enabled, the timer pauses
+when the browser tab becomes hidden or the device display sleeps, then resumes when the page becomes
+visible again. Browser autoplay, vibration, notifications, and Screen Wake Lock are feature-detected
+and depend on the target browser and device.

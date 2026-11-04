@@ -1,13 +1,11 @@
 import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Bell, BookOpen, BarChart3, ChevronLeft, ChevronDown, Coffee, Download, Eye, HelpCircle, Home, Pause, Play, RotateCcw, Settings, ShieldCheck, Smartphone, Sparkles, Square, Volume2 } from 'lucide-react';
+import { Bell, BookOpen, BarChart3, ChevronLeft, ChevronDown, Coffee, Download, Eye, HelpCircle, Home, Pause, Play, RotateCcw, Settings, ShieldCheck, Smartphone, Sparkles, Square, Volume2, VolumeX } from 'lucide-react';
 import './styles.css';
 import { audioManager } from './audio/AudioManager.js';
 import { FOCUS_SECONDS, REST_SECONDS, useRestTimer } from './audio/useRestTimer.js';
 import { useSoundSettings } from './audio/useSoundSettings.js';
-import { registerPlugin } from '@capacitor/core';
 const SoundSettings = lazy(() => import('./audio/SoundSettings.jsx'));
-const BlinkTimer = registerPlugin('BlinkTimer');
 
 function requestNotifications() {
   if ('Notification' in window && typeof Notification.requestPermission === 'function' && Notification.permission === 'default') {
@@ -17,30 +15,16 @@ function requestNotifications() {
   }
 }
 
-async function notify(title, body) {
-  if (!('Notification' in window) || Notification.permission !== 'granted') return;
-  const options = {
-    body,
-    silent: false,
-    renotify: true,
-    requireInteraction: true,
-    tag: 'blink-break-alert',
-    actions: [
-      { action: 'pause', title: 'Pause' },
-      { action: 'resume', title: 'Resume' },
-      { action: 'stop', title: 'Stop' },
-    ],
-  };
-  try {
-    const registration = await navigator.serviceWorker?.ready;
-    if (registration?.showNotification) {
-      await registration.showNotification(title, options);
-      return;
-    }
-  } catch (error) {
-    console.warn('[Blink] service-worker notification unavailable', error);
+function notify(title, body) {
+  if ('Notification' in window && Notification.permission === 'granted') {
+    new Notification(title, {
+      body,
+      silent: false,
+      renotify: true,
+      requireInteraction: true,
+      tag: 'blink-break-alert',
+    });
   }
-  new Notification(title, options);
 }
 
 function formatTime(total) {
@@ -58,7 +42,7 @@ function getFocusableElements(container) {
 const SETTINGS_KEY = 'blink-working-settings';
 const DEFAULT_WORK_SETTINGS = {
   enabled: true, autoPause: true, start: '09:00', end: '18:00',
-  quietStart: '13:00', quietEnd: '14:00', days: [1, 2, 3, 4, 5],
+  quietStart: '13:00', quietEnd: '14:00', days: [1, 2, 3, 4, 5], pauseWhenHidden: true,
 };
 
 function readWorkSettings() {
@@ -108,6 +92,7 @@ function WorkSettings({ settings, onChange, onClose }) {
     <p className="settings-copy">Blink will only remind you during your chosen work window. Quiet hours can cross midnight.</p>
     <label className="settings-switch"><span><strong>Working schedule</strong><small>Pause reminders outside your schedule</small></span><input type="checkbox" checked={settings.enabled} onChange={(event) => onChange({ enabled: event.target.checked })} /></label>
     <label className="settings-switch"><span><strong>Automatic pause / resume</strong><small>Apply schedule changes to the active timer</small></span><input type="checkbox" checked={settings.autoPause} onChange={(event) => onChange({ autoPause: event.target.checked })} /></label>
+    <label className="settings-switch"><span><strong>Pause when tab is hidden</strong><small>Pause while the screen or tab is away</small></span><input type="checkbox" checked={settings.pauseWhenHidden} onChange={(event) => onChange({ pauseWhenHidden: event.target.checked })} /></label>
     <div className="time-grid"><label>Work starts<input type="time" value={settings.start} onChange={(event) => onChange({ start: event.target.value })} /></label><label>Work ends<input type="time" value={settings.end} onChange={(event) => onChange({ end: event.target.value })} /></label><label>Quiet starts<input type="time" value={settings.quietStart} onChange={(event) => onChange({ quietStart: event.target.value })} /></label><label>Quiet ends<input type="time" value={settings.quietEnd} onChange={(event) => onChange({ quietEnd: event.target.value })} /></label></div>
     <fieldset className="day-picker"><legend>Working days</legend>{[['M',1],['T',2],['W',3],['T',4],['F',5],['S',6],['S',0]].map(([label, day]) => <button key={`${label}-${day}`} type="button" className={settings.days.includes(day) ? 'selected' : ''} onClick={() => toggleDay(day)} aria-pressed={settings.days.includes(day)}>{label}</button>)}</fieldset>
   </section>;
@@ -146,7 +131,7 @@ function App() {
     }
     if (type === 'focus-complete') {
       setNotice('Focus complete. Time to let your eyes travel across the room.');
-      if (navigator.vibrate) navigator.vibrate([180, 90, 180]);
+      if (sound.settings.enabled && navigator.vibrate) navigator.vibrate([180, 90, 180]);
       notify('Time to rest your eyes', 'Look 20 feet away for 20 seconds.');
     }
     if (type === 'rest-complete') {
@@ -154,11 +139,11 @@ function App() {
       setNotice('Rest complete. A fresh focus rhythm has begun.');
       notify('Focus time resumed', 'Your eyes are ready for another 20-minute cycle.');
     }
-  }, []);
+  }, [sound.settings.enabled]);
 
   const {
-    phase, pausedFrom, secondsLeft, completed, daily, lastRest, screenTime, endsAt, isRunning, isRest, start, pause, reset,
-  } = useRestTimer({ audio: audioManager, onEvent: handleTimerEvent });
+    phase, pausedFrom, secondsLeft, completed, daily, lastRest, screenTime, isRunning, isRest, start, pause, reset,
+  } = useRestTimer({ audio: audioManager, onEvent: handleTimerEvent, pauseWhenHidden: workSettings.pauseWhenHidden });
   const restOverlayActive = isRest || (phase === 'paused' && pausedFrom === 'rest');
 
   useEffect(() => {
@@ -187,45 +172,8 @@ function App() {
     return () => window.clearInterval(timer);
   }, [workSettings, isRunning, phase, pause, start]);
 
-  useEffect(() => {
-    const nativeSync = async () => {
-      try {
-        if (phase === 'stopped') {
-          await BlinkTimer.stop?.();
-          return;
-        }
-        await BlinkTimer.sync?.({ phase, endsAt: endsAt || 0, secondsLeft, completed });
-      } catch (error) {
-        if (!String(error?.message || error).toLowerCase().includes('not implemented')) {
-          console.warn('[Blink] native timer sync failed', error);
-        }
-      }
-    };
-    nativeSync();
-  }, [phase, endsAt, completed]);
-
-  useEffect(() => {
-    const syncFromNative = async () => {
-      try {
-        const native = await BlinkTimer.getState?.();
-        if (!native?.phase) return;
-        if (native.phase === 'paused' && isRunning) pause();
-        if ((native.phase === 'focus' || native.phase === 'rest') && phase === 'paused') start();
-        if (native.phase === 'stopped' && phase !== 'stopped') reset();
-      } catch (error) {
-        if (!String(error?.message || error).toLowerCase().includes('not implemented')) {
-          console.warn('[Blink] native timer state read failed', error);
-        }
-      }
-    };
-    const onVisible = () => { if (document.visibilityState === 'visible') syncFromNative(); };
-    document.addEventListener('visibilitychange', onVisible);
-    return () => document.removeEventListener('visibilitychange', onVisible);
-  }, [isRunning, phase, pause, reset, start]);
-
   const handleStart = () => {
     requestNotifications();
-    BlinkTimer.requestNotificationPermission?.().catch(() => {});
     audioManager.armForAlerts?.();
     start();
   };
@@ -240,6 +188,67 @@ function App() {
   }, [isRunning, secondsLeft]);
 
   useEffect(() => {
+    document.title = isRunning ? `${formatTime(secondsLeft)} · Blink` : `${phase === 'paused' ? 'Paused' : 'Ready'} · Blink`;
+    return () => { document.title = 'Blink — Give your eyes a better rhythm'; };
+  }, [isRunning, phase, secondsLeft]);
+
+  useEffect(() => {
+    if (!restOverlayActive) return undefined;
+    const onKeyDown = (event) => {
+      if (event.key.toLowerCase() !== 'm' || ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) return;
+      event.preventDefault();
+      const nextEnabled = !sound.settings.enabled;
+      sound.update({ enabled: nextEnabled });
+      if (nextEnabled) {
+        audioManager.startRestTune({ totalSec: REST_SECONDS, elapsedSec: REST_SECONDS - secondsLeft });
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [restOverlayActive, secondsLeft, sound]);
+
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return undefined;
+    if (restOverlayActive) {
+      try {
+        if ('MediaMetadata' in window) {
+          navigator.mediaSession.metadata = new MediaMetadata({
+            title: 'Blink eye rest',
+            artist: 'Look away for 20 seconds',
+            album: 'Blink 20-20-20',
+          });
+        }
+        navigator.mediaSession.playbackState = isRest ? 'playing' : 'paused';
+        navigator.mediaSession.setActionHandler?.('pause', pause);
+        navigator.mediaSession.setActionHandler?.('play', start);
+        navigator.mediaSession.setActionHandler?.('stop', pause);
+      } catch (error) {
+        console.warn('[Blink] Media Session controls unavailable', error);
+      }
+    } else {
+      navigator.mediaSession.metadata = null;
+      navigator.mediaSession.playbackState = 'none';
+    }
+    return () => {
+      try {
+        navigator.mediaSession.setActionHandler?.('pause', null);
+        navigator.mediaSession.setActionHandler?.('play', null);
+        navigator.mediaSession.setActionHandler?.('stop', null);
+      } catch (error) {
+        console.warn('[Blink] Media Session cleanup failed', error);
+      }
+    };
+  }, [isRest, pause, restOverlayActive, start]);
+
+  const toggleBreakSound = () => {
+    const nextEnabled = !sound.settings.enabled;
+    sound.update({ enabled: nextEnabled });
+    if (nextEnabled) {
+      audioManager.startRestTune({ totalSec: REST_SECONDS, elapsedSec: REST_SECONDS - secondsLeft });
+    }
+  };
+
+  useEffect(() => {
     if (!notice) return undefined;
     const timeout = window.setTimeout(() => setNotice(''), 3000);
     return () => window.clearTimeout(timeout);
@@ -248,17 +257,6 @@ function App() {
   useEffect(() => {
     if (audioState.blocked) setNotice('Sound is waiting for a tap. Tap anywhere to enable it.');
   }, [audioState.blocked]);
-
-  useEffect(() => {
-    const onServiceWorkerMessage = (event) => {
-      if (event.data?.type !== 'blink-notification-action') return;
-      if (event.data.action === 'pause') pause();
-      if (event.data.action === 'resume') start();
-      if (event.data.action === 'stop') reset();
-    };
-    navigator.serviceWorker?.addEventListener('message', onServiceWorkerMessage);
-    return () => navigator.serviceWorker?.removeEventListener('message', onServiceWorkerMessage);
-  }, [pause, reset, start]);
 
   useEffect(() => {
     if (!restOverlayActive) {
@@ -547,7 +545,7 @@ function App() {
             <h2 id="rest-title">Look 20 meters away.</h2>
             <p id="rest-description">Let your gaze leave the screen. Soften your eyes, blink slowly, and look at something across the room.</p>
             <div className="rest-countdown"><strong>{formatTime(secondsLeft)}</strong><span>{isRest ? 'remaining' : 'paused'}</span></div>
-            <div className="rest-overlay-actions"><button type="button" className="primary-button" onClick={isRest ? pause : start}>{isRest ? <><Pause size={17} /> Pause</> : <><Play size={17} /> Resume</>}</button></div>
+            <div className="rest-overlay-actions"><button type="button" className="primary-button" onClick={isRest ? pause : start}>{isRest ? <><Pause size={17} /> Pause</> : <><Play size={17} /> Resume</>}</button><button type="button" className="secondary-button rest-sound-toggle" onClick={toggleBreakSound} aria-label={sound.settings.enabled ? 'Mute music' : 'Unmute music'} title={sound.settings.enabled ? 'Mute music (M)' : 'Unmute music (M)'}>{sound.settings.enabled ? <Volume2 size={17} /> : <VolumeX size={17} />}</button></div>
             <p className="rest-overlay-note">Your focus session will continue automatically.</p>
           </div>
         </div>}
@@ -561,7 +559,7 @@ function App() {
                 <p className="phase-kicker">{isRest ? 'Your eyes are up next' : phase === 'stopped' ? 'A small reset, whenever you’re ready' : phase === 'paused' ? 'Your rhythm is paused' : 'In your focus flow'}</p>
                 <h2>{isRest ? 'Look 20 feet away' : 'Stay with the moment'}</h2>
               </div>
-              <span className={`phase-badge ${isRest ? 'teal' : phase === 'paused' ? 'paused' : ''}`}><span className="badge-dot" />{isRest ? 'Look away' : phase === 'stopped' ? 'Ready' : phase === 'paused' ? 'Paused' : 'Focus'}</span>
+              <span className={`phase-badge ${isRest ? 'teal' : phase === 'paused' ? 'paused' : ''}`}><span className="badge-dot" />{isRest ? 'Look away' : phase === 'stopped' ? 'Ready' : phase === 'paused' ? 'Paused' : 'Focus'}</span><span className={`timer-status ${isRunning ? 'is-running' : ''}`}><span className="badge-dot" />{isRunning ? 'Running' : 'Paused'}</span>
             </div>
 
             <div className="timer-center">

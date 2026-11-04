@@ -16,7 +16,7 @@ function loadInitial(now = Date.now()) {
   const base = {
     phase: 'stopped', pausedFrom: null, pausedAt: null, secondsLeft: FOCUS_SECONDS, endsAt: null,
     completed: 0, totalCompletedBreaks: 0, lastRest: 'Not yet today', screenTime: 0, startedAt: null,
-    breakStartAt: null, lastActiveAt: now, daily: emptyDaily(), weekly: {},
+    breakStartAt: null, lastActiveAt: now, hiddenPaused: false, daily: emptyDaily(), weekly: {},
   };
   let saved = null;
   try { saved = JSON.parse(window.localStorage.getItem(STORAGE_KEY)); } catch { saved = null; }
@@ -46,11 +46,12 @@ function loadInitial(now = Date.now()) {
  *  - The selected ringtone plays only while the 20 s rest runs, and is stopped the moment it ends.
  * onEvent(type): 'started' | 'resumed' | 'paused' | 'reset' | 'focus-complete' | 'rest-complete'
  */
-export function useRestTimer({ audio, onEvent }) {
+export function useRestTimer({ audio, onEvent, pauseWhenHidden = true }) {
   const [state, setState] = useState(() => loadInitial());
   const stateRef = useRef(state);
   const handledRef = useRef(null);
   const wakeLockRef = useRef(null);
+  const lastTickAtRef = useRef(typeof performance !== 'undefined' ? performance.now() : Date.now());
   const eventRef = useRef(onEvent);
   eventRef.current = onEvent;
 
@@ -67,6 +68,19 @@ export function useRestTimer({ audio, onEvent }) {
     const s = stateRef.current;
     if (s.phase !== 'focus' && s.phase !== 'rest') return;
     const now = Date.now();
+    const monotonicNow = typeof performance !== 'undefined' ? performance.now() : now;
+    const gapMs = monotonicNow - lastTickAtRef.current;
+    lastTickAtRef.current = monotonicNow;
+    if (gapMs > 3000 && pauseWhenHidden && document.visibilityState === 'visible') {
+      const remaining = Math.max(1, Math.ceil((s.endsAt - now) / 1000));
+      audio.stopAll();
+      commit({
+        phase: 'paused', pausedFrom: s.phase, pausedAt: now, secondsLeft: remaining,
+        endsAt: null, hiddenPaused: true, lastActiveAt: now,
+      });
+      emit('paused');
+      return;
+    }
     const remainingMs = s.endsAt - now;
     const screenTime = s.startedAt ? Math.max(0, Math.floor((now - s.startedAt) / 1000)) : s.screenTime;
     if (remainingMs > 0) {
@@ -99,30 +113,54 @@ export function useRestTimer({ audio, onEvent }) {
   const isRest = state.phase === 'rest';
 
   useEffect(() => {
-    if (!isRunning) return undefined;
-    tick();
-    const timer = window.setInterval(tick, TICK_MS);
+    if (isRunning) tick();
+    const timer = isRunning ? window.setInterval(tick, TICK_MS) : null;
     const onVisible = () => {
       if (document.visibilityState !== 'visible') return;
       const current = stateRef.current;
-      const awayFor = Date.now() - (current.lastActiveAt || Date.now());
+      const now = Date.now();
+      const awayFor = now - (current.pausedAt || current.lastActiveAt || now);
       if (awayFor >= AWAY_RESET_MS) {
         audio.stopAll();
         handledRef.current = null;
-        const now = Date.now();
         commit({
           phase: 'focus', pausedFrom: null, pausedAt: null, secondsLeft: FOCUS_SECONDS,
           endsAt: now + FOCUS_SECONDS * 1000, startedAt: now, screenTime: 0,
-          breakStartAt: null, lastActiveAt: now,
+          breakStartAt: null, lastActiveAt: now, hiddenPaused: false,
         });
         emit('away-reset');
+      } else if (current.hiddenPaused) {
+        const phase = current.pausedFrom || 'focus';
+        const remaining = Math.max(1, current.secondsLeft);
+        commit({
+          phase, endsAt: now + remaining * 1000, pausedFrom: null, pausedAt: null,
+          hiddenPaused: false, lastActiveAt: now,
+          startedAt: current.startedAt ? current.startedAt + awayFor : now,
+        });
+        if (phase === 'rest') {
+          audio.startRestTune({ totalSec: REST_SECONDS, elapsedSec: REST_SECONDS - remaining });
+        }
+        emit('resumed');
       } else {
         commit({ lastActiveAt: Date.now() });
         tick();
       }
     };
     const onHidden = () => {
-      if (document.visibilityState === 'hidden') commit({ lastActiveAt: Date.now() });
+      if (document.visibilityState !== 'hidden') return;
+      const current = stateRef.current;
+      const now = Date.now();
+      if (pauseWhenHidden && (current.phase === 'focus' || current.phase === 'rest')) {
+        const remaining = Math.max(1, Math.ceil((current.endsAt - now) / 1000));
+        audio.stopAll();
+        commit({
+          phase: 'paused', pausedFrom: current.phase, pausedAt: now, secondsLeft: remaining,
+          endsAt: null, hiddenPaused: true, lastActiveAt: now,
+        });
+        emit('paused');
+      } else {
+        commit({ lastActiveAt: now });
+      }
     };
     document.addEventListener('visibilitychange', onVisible);
     document.addEventListener('visibilitychange', onHidden);
@@ -131,7 +169,7 @@ export function useRestTimer({ audio, onEvent }) {
       document.removeEventListener('visibilitychange', onVisible);
       document.removeEventListener('visibilitychange', onHidden);
     };
-  }, [isRunning, tick]);
+  }, [audio, isRunning, pauseWhenHidden, tick]);
 
   useEffect(() => {
     let cancelled = false;
@@ -174,6 +212,7 @@ export function useRestTimer({ audio, onEvent }) {
     const s = stateRef.current;
     if (s.phase === 'focus' || s.phase === 'rest') return;
     const now = Date.now();
+    lastTickAtRef.current = typeof performance !== 'undefined' ? performance.now() : now;
     audio.stopRingtone();
     handledRef.current = null;
     if (s.phase === 'paused') {
@@ -182,7 +221,7 @@ export function useRestTimer({ audio, onEvent }) {
       const shift = s.pausedAt ? now - s.pausedAt : 0;
       commit({
         phase, secondsLeft: remaining, endsAt: now + remaining * 1000, pausedFrom: null, pausedAt: null,
-        startedAt: s.startedAt ? s.startedAt + shift : now, lastActiveAt: now,
+        startedAt: s.startedAt ? s.startedAt + shift : now, lastActiveAt: now, hiddenPaused: false,
       });
       if (phase === 'rest') audio.startRestTune({ totalSec: REST_SECONDS, elapsedSec: REST_SECONDS - remaining });
       emit('resumed');
@@ -190,7 +229,7 @@ export function useRestTimer({ audio, onEvent }) {
     }
     commit({
       phase: 'focus', secondsLeft: FOCUS_SECONDS, endsAt: now + FOCUS_SECONDS * 1000,
-      startedAt: now, screenTime: 0, pausedFrom: null, pausedAt: null, lastActiveAt: now,
+      startedAt: now, screenTime: 0, pausedFrom: null, pausedAt: null, lastActiveAt: now, hiddenPaused: false,
     });
     emit('started');
   }, [audio, commit, emit]);
@@ -200,7 +239,7 @@ export function useRestTimer({ audio, onEvent }) {
     if (s.phase !== 'focus' && s.phase !== 'rest') return;
     const remaining = Math.max(1, Math.ceil((s.endsAt - Date.now()) / 1000));
     audio.stopAll();
-    commit({ phase: 'paused', pausedFrom: s.phase, secondsLeft: remaining, endsAt: null, pausedAt: Date.now(), lastActiveAt: Date.now() });
+    commit({ phase: 'paused', pausedFrom: s.phase, secondsLeft: remaining, endsAt: null, pausedAt: Date.now(), lastActiveAt: Date.now(), hiddenPaused: false });
     emit('paused');
   }, [audio, commit, emit]);
 
@@ -209,7 +248,7 @@ export function useRestTimer({ audio, onEvent }) {
     handledRef.current = null;
     commit({
       phase: 'stopped', pausedFrom: null, pausedAt: null, secondsLeft: FOCUS_SECONDS, endsAt: null, screenTime: 0, startedAt: null,
-      breakStartAt: null, lastActiveAt: Date.now(),
+      breakStartAt: null, lastActiveAt: Date.now(), hiddenPaused: false,
     });
     emit('reset');
   }, [audio, commit, emit]);

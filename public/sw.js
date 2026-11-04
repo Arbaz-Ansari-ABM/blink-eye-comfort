@@ -1,4 +1,4 @@
-const CACHE_NAME = 'blink-shell-v4';
+const CACHE_NAME = 'blink-shell-v3';
 const APP_SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icons/icon-favicon.png', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/apple-touch-icon.png'];
 
 self.addEventListener('install', (event) => {
@@ -46,20 +46,5 @@ self.addEventListener('fetch', (event) => {
       }
       return response;
     }).catch(() => caches.match('/index.html')),
-  );
-});
-
-self.addEventListener('notificationclick', (event) => {
-  const action = event.action || 'open';
-  event.notification.close();
-  event.waitUntil(
-    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
-      const target = clients.find((client) => 'focus' in client) || clients[0];
-      if (target) {
-        target.postMessage({ type: 'blink-notification-action', action });
-        return target.focus();
-      }
-      return self.clients.openWindow('/');
-    }),
   );
 });
