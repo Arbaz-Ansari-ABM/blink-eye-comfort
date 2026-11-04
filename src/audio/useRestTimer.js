@@ -57,6 +57,7 @@ export function useRestTimer({ audio, onEvent, pauseWhenHidden = true }) {
   const stateRef = useRef(state);
   const handledRef = useRef(null);
   const wakeLockRef = useRef(null);
+  const hiddenPauseTimerRef = useRef(null);
   const lastTickAtRef = useRef(typeof performance !== 'undefined' ? performance.now() : Date.now());
   const eventRef = useRef(onEvent);
   eventRef.current = onEvent;
@@ -113,6 +114,10 @@ export function useRestTimer({ audio, onEvent, pauseWhenHidden = true }) {
     const timer = isRunning ? window.setInterval(tick, TICK_MS) : null;
     const onVisible = () => {
       if (document.visibilityState !== 'visible') return;
+      if (hiddenPauseTimerRef.current) {
+        window.clearTimeout(hiddenPauseTimerRef.current);
+        hiddenPauseTimerRef.current = null;
+      }
       const current = stateRef.current;
       const now = Date.now();
       const awayFor = now - (current.pausedAt || current.lastActiveAt || now);
@@ -144,19 +149,32 @@ export function useRestTimer({ audio, onEvent, pauseWhenHidden = true }) {
     };
     const onHidden = () => {
       if (document.visibilityState !== 'hidden') return;
-      commit({ lastActiveAt: Date.now() });
+      const current = stateRef.current;
+      if (!pauseWhenHidden || (current.phase !== 'focus' && current.phase !== 'rest')) return;
+      if (hiddenPauseTimerRef.current) window.clearTimeout(hiddenPauseTimerRef.current);
+      hiddenPauseTimerRef.current = window.setTimeout(() => {
+        hiddenPauseTimerRef.current = null;
+        if (document.visibilityState !== 'hidden') return;
+        const latest = stateRef.current;
+        if (latest.phase !== 'focus' && latest.phase !== 'rest') return;
+        const now = Date.now();
+        const remaining = Math.max(1, Math.ceil((latest.endsAt - now) / 1000));
+        audio.stopAll();
+        commit({
+          phase: 'paused', pausedFrom: latest.phase, pausedAt: now, secondsLeft: remaining,
+          endsAt: null, hiddenPaused: true, lastActiveAt: now,
+        });
+        emit('paused');
+      }, 1500);
     };
     const onPageHide = () => {
       const current = stateRef.current;
       if (!pauseWhenHidden || (current.phase !== 'focus' && current.phase !== 'rest')) return;
-      const now = Date.now();
-      const remaining = Math.max(1, Math.ceil((current.endsAt - now) / 1000));
-      audio.stopAll();
-      commit({
-        phase: 'paused', pausedFrom: current.phase, pausedAt: now, secondsLeft: remaining,
-        endsAt: null, hiddenPaused: true, lastActiveAt: now,
-      });
-      emit('paused');
+      if (hiddenPauseTimerRef.current) {
+        window.clearTimeout(hiddenPauseTimerRef.current);
+        hiddenPauseTimerRef.current = null;
+      }
+      commit({ lastActiveAt: Date.now() });
     };
     document.addEventListener('visibilitychange', onVisible);
     document.addEventListener('visibilitychange', onHidden);
@@ -165,6 +183,7 @@ export function useRestTimer({ audio, onEvent, pauseWhenHidden = true }) {
     if (document.visibilityState === 'visible') onVisible();
     return () => {
       window.clearInterval(timer);
+      if (hiddenPauseTimerRef.current) window.clearTimeout(hiddenPauseTimerRef.current);
       document.removeEventListener('visibilitychange', onVisible);
       document.removeEventListener('visibilitychange', onHidden);
       window.removeEventListener('pagehide', onPageHide);
