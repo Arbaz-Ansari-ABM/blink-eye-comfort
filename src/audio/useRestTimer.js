@@ -24,6 +24,9 @@ function loadInitial(now = Date.now()) {
   const state = { ...base };
   Object.keys(base).forEach((key) => { if (saved[key] !== undefined && saved[key] !== null) state[key] = saved[key]; });
   if (!['stopped', 'focus', 'rest', 'paused'].includes(state.phase)) return base;
+  if (state.hiddenPaused && state.pausedAt && now - state.pausedAt >= AWAY_RESET_MS) {
+    return { ...base, completed: state.completed, totalCompletedBreaks: state.totalCompletedBreaks, lastRest: state.lastRest, daily: state.daily, weekly: state.weekly };
+  }
   if (state.phase === 'focus' || state.phase === 'rest') {
     if (!state.endsAt) state.endsAt = now + Math.max(state.secondsLeft, 1) * 1000;
     if (state.endsAt < now - STALE_MS) {
@@ -56,8 +59,10 @@ export function useRestTimer({ audio, onEvent, pauseWhenHidden = true }) {
   eventRef.current = onEvent;
 
   const commit = useCallback((patch) => {
-    stateRef.current = { ...stateRef.current, ...patch };
-    setState(stateRef.current);
+    const nextState = { ...stateRef.current, ...patch };
+    stateRef.current = nextState;
+    try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState)); } catch { /* storage denied */ }
+    setState(nextState);
   }, []);
 
   const emit = useCallback((type) => {
@@ -120,15 +125,15 @@ export function useRestTimer({ audio, onEvent, pauseWhenHidden = true }) {
       const current = stateRef.current;
       const now = Date.now();
       const awayFor = now - (current.pausedAt || current.lastActiveAt || now);
-      if (awayFor >= AWAY_RESET_MS) {
+      if (current.hiddenPaused && awayFor >= AWAY_RESET_MS) {
         audio.stopAll();
         handledRef.current = null;
         commit({
-          phase: 'focus', pausedFrom: null, pausedAt: null, secondsLeft: FOCUS_SECONDS,
-          endsAt: now + FOCUS_SECONDS * 1000, startedAt: now, screenTime: 0,
+          phase: 'stopped', pausedFrom: null, pausedAt: null, secondsLeft: FOCUS_SECONDS,
+          endsAt: null, startedAt: null, screenTime: 0,
           breakStartAt: null, lastActiveAt: now, hiddenPaused: false,
         });
-        emit('away-reset');
+        emit('reset');
       } else if (current.hiddenPaused) {
         const phase = current.pausedFrom || 'focus';
         const remaining = Math.max(1, current.secondsLeft);
@@ -162,12 +167,28 @@ export function useRestTimer({ audio, onEvent, pauseWhenHidden = true }) {
         commit({ lastActiveAt: now });
       }
     };
+    const onPageHide = () => {
+      const current = stateRef.current;
+      if (!pauseWhenHidden || (current.phase !== 'focus' && current.phase !== 'rest')) return;
+      const now = Date.now();
+      const remaining = Math.max(1, Math.ceil((current.endsAt - now) / 1000));
+      audio.stopAll();
+      commit({
+        phase: 'paused', pausedFrom: current.phase, pausedAt: now, secondsLeft: remaining,
+        endsAt: null, hiddenPaused: true, lastActiveAt: now,
+      });
+      emit('paused');
+    };
     document.addEventListener('visibilitychange', onVisible);
     document.addEventListener('visibilitychange', onHidden);
+    window.addEventListener('pagehide', onPageHide);
+    window.addEventListener('pageshow', onVisible);
     return () => {
       window.clearInterval(timer);
       document.removeEventListener('visibilitychange', onVisible);
       document.removeEventListener('visibilitychange', onHidden);
+      window.removeEventListener('pagehide', onPageHide);
+      window.removeEventListener('pageshow', onVisible);
     };
   }, [audio, isRunning, pauseWhenHidden, tick]);
 
@@ -253,7 +274,10 @@ export function useRestTimer({ audio, onEvent, pauseWhenHidden = true }) {
     emit('reset');
   }, [audio, commit, emit]);
 
-  const stopSound = useCallback(() => audio.stopRingtone(), [audio]);
+  const stopSound = useCallback(() => {
+    audio.stopRestTune();
+    audio.stopRingtone();
+  }, [audio]);
 
   return {
     ...state, isRunning, isRest: state.phase === 'rest', start, pause, reset, stopSound,

@@ -1,6 +1,6 @@
 import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Bell, BookOpen, BarChart3, ChevronLeft, ChevronDown, Coffee, Download, Eye, HelpCircle, Home, Pause, Play, RotateCcw, Settings, ShieldCheck, Smartphone, Sparkles, Square, Volume2, VolumeX } from 'lucide-react';
+import { Bell, BookOpen, BarChart3, ChevronLeft, Dumbbell, ChevronDown, Coffee, Download, Eye, HelpCircle, Home, Pause, Play, RotateCcw, Settings, ShieldCheck, Smartphone, Sparkles, Square, Volume2, VolumeX } from 'lucide-react';
 import './styles.css';
 import { audioManager } from './audio/AudioManager.js';
 import { FOCUS_SECONDS, REST_SECONDS, useRestTimer } from './audio/useRestTimer.js';
@@ -42,7 +42,7 @@ function getFocusableElements(container) {
 const SETTINGS_KEY = 'blink-working-settings';
 const DEFAULT_WORK_SETTINGS = {
   enabled: true, autoPause: true, start: '09:00', end: '18:00',
-  quietStart: '13:00', quietEnd: '14:00', days: [1, 2, 3, 4, 5], pauseWhenHidden: true,
+  days: [1, 2, 3, 4, 5], pauseWhenHidden: true,
 };
 
 function readWorkSettings() {
@@ -52,18 +52,6 @@ function readWorkSettings() {
   } catch { return DEFAULT_WORK_SETTINGS; }
 }
 
-function minutesOf(value) { const [hours, minutes] = String(value).split(':').map(Number); return hours * 60 + minutes; }
-function inWindow(now, start, end) {
-  const current = now.getHours() * 60 + now.getMinutes();
-  const from = minutesOf(start); const to = minutesOf(end);
-  return from <= to ? current >= from && current < to : current >= from || current < to;
-}
-function isWorkingTime(settings, now = new Date()) {
-  const day = now.getDay();
-  if (!settings.days.includes(day)) return false;
-  return inWindow(now, settings.start, settings.end) && !inWindow(now, settings.quietStart, settings.quietEnd);
-}
-
 function WeeklyStats({ daily = {}, completed = 0 }) {
   const today = new Date();
   const monday = new Date(today);
@@ -71,16 +59,44 @@ function WeeklyStats({ daily = {}, completed = 0 }) {
   monday.setDate(today.getDate() - offset);
   const days = Array.from({ length: 7 }, (_, index) => {
     const date = new Date(monday); date.setDate(monday.getDate() + index);
-    return { label: date.toLocaleDateString([], { weekday: 'short' }), count: daily[date.toISOString().slice(0, 10)] || 0 };
+    return {
+      label: date.toLocaleDateString([], { weekday: 'short' }),
+      count: daily[date.toISOString().slice(0, 10)] || 0,
+      isToday: index === offset,
+    };
   });
   const total = days.reduce((sum, day) => sum + day.count, 0);
   const max = Math.max(1, ...days.map((day) => day.count));
-  const streak = days.slice().reverse().reduce((count, day) => count + (day.count ? 1 : 0), 0);
+  // Keep the streak consecutive: today counts when active; otherwise use the
+  // most recent completed day and stop at the first day without a break.
+  let streak = 0;
+  let streakIndex = days[offset].count ? offset : offset - 1;
+  while (streakIndex >= 0 && days[streakIndex].count) {
+    streak += 1;
+    streakIndex -= 1;
+  }
   return <section className="stats-panel" aria-labelledby="stats-title">
-    <div className="panel-heading"><div><p className="eyebrow">This week</p><h2 id="stats-title">Your eye-care rhythm</h2></div><BarChart3 size={22} aria-hidden="true" /></div>
-    <div className="stats-summary"><div><strong>{completed}</strong><span>all-time breaks</span></div><div><strong>{total}</strong><span>this week</span></div><div><strong>{streak}</strong><span>day streak</span></div></div>
+    <div className="panel-heading">
+      <div>
+        <p className="eyebrow">This week <span className="eyebrow-rule" aria-hidden="true" /></p>
+        <h2 id="stats-title">Your eye-care rhythm</h2>
+        <p className="stats-subtitle">A quiet view of the breaks that keep your focus sustainable.</p>
+      </div>
+      <span className="stats-icon" aria-hidden="true"><BarChart3 size={19} /></span>
+    </div>
+    <div className="stats-summary">
+      <div><strong>{completed}</strong><span>All-time breaks</span></div>
+      <div><strong>{total}</strong><span>This week</span></div>
+      <div><strong>{streak}</strong><span>Day streak</span></div>
+    </div>
+    <div className="chart-heading"><span>Breaks by day</span><span>Mon — Sun</span></div>
     <div className="bar-chart" aria-label="Completed breaks Monday to Sunday">
-      {days.map((day) => <div className="bar-column" key={day.label}><span className="bar-value">{day.count || ''}</span><div className="bar-track"><i style={{ height: `${Math.max(5, day.count / max * 100)}%` }} /></div><small>{day.label}</small></div>)}
+      <div className="chart-baseline" aria-hidden="true" />
+      {days.map((day) => <div className={`bar-column${day.isToday ? ' is-today' : ''}`} key={day.label}>
+        <span className="bar-value">{day.count}</span>
+        <div className="bar-track"><i style={{ height: `${day.count ? Math.max(5, day.count / max * 100) : 0}%` }} /></div>
+        <small>{day.label}</small>
+      </div>)}
     </div>
   </section>;
 }
@@ -89,11 +105,9 @@ function WorkSettings({ settings, onChange, onClose }) {
   const toggleDay = (day) => onChange({ days: settings.days.includes(day) ? settings.days.filter((item) => item !== day) : [...settings.days, day].sort() });
   return <section className="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title">
     <div className="panel-heading"><div><p className="eyebrow">Personal rhythm</p><h2 id="settings-title">Working hours</h2></div><button className="ss-close" type="button" onClick={onClose} aria-label="Close settings">×</button></div>
-    <p className="settings-copy">Blink will only remind you during your chosen work window. Quiet hours can cross midnight.</p>
+    <p className="settings-copy">Set your office timing</p>
     <label className="settings-switch"><span><strong>Working schedule</strong><small>Pause reminders outside your schedule</small></span><input type="checkbox" checked={settings.enabled} onChange={(event) => onChange({ enabled: event.target.checked })} /></label>
-    <label className="settings-switch"><span><strong>Automatic pause / resume</strong><small>Apply schedule changes to the active timer</small></span><input type="checkbox" checked={settings.autoPause} onChange={(event) => onChange({ autoPause: event.target.checked })} /></label>
-    <label className="settings-switch"><span><strong>Pause when tab is hidden</strong><small>Pause while the screen or tab is away</small></span><input type="checkbox" checked={settings.pauseWhenHidden} onChange={(event) => onChange({ pauseWhenHidden: event.target.checked })} /></label>
-    <div className="time-grid"><label>Work starts<input type="time" value={settings.start} onChange={(event) => onChange({ start: event.target.value })} /></label><label>Work ends<input type="time" value={settings.end} onChange={(event) => onChange({ end: event.target.value })} /></label><label>Quiet starts<input type="time" value={settings.quietStart} onChange={(event) => onChange({ quietStart: event.target.value })} /></label><label>Quiet ends<input type="time" value={settings.quietEnd} onChange={(event) => onChange({ quietEnd: event.target.value })} /></label></div>
+    <div className="time-grid"><label>Work starts<input type="time" value={settings.start} onChange={(event) => onChange({ start: event.target.value })} /></label><label>Work ends<input type="time" value={settings.end} onChange={(event) => onChange({ end: event.target.value })} /></label></div>
     <fieldset className="day-picker"><legend>Working days</legend>{[['M',1],['T',2],['W',3],['T',4],['F',5],['S',6],['S',0]].map(([label, day]) => <button key={`${label}-${day}`} type="button" className={settings.days.includes(day) ? 'selected' : ''} onClick={() => toggleDay(day)} aria-pressed={settings.days.includes(day)}>{label}</button>)}</fieldset>
   </section>;
 }
@@ -108,7 +122,6 @@ function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [workSettings, setWorkSettings] = useState(readWorkSettings);
   const [installPrompt, setInstallPrompt] = useState(null);
-  const schedulePausedRef = useRef(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const alertRef = useRef(null);
   const restDialogRef = useRef(null);
@@ -142,8 +155,8 @@ function App() {
   }, [sound.settings.enabled]);
 
   const {
-    phase, pausedFrom, secondsLeft, completed, daily, lastRest, screenTime, isRunning, isRest, start, pause, reset,
-  } = useRestTimer({ audio: audioManager, onEvent: handleTimerEvent, pauseWhenHidden: workSettings.pauseWhenHidden });
+    phase, pausedFrom, secondsLeft, completed, daily, lastRest, screenTime, isRunning, isRest, start, pause, reset, stopSound,
+  } = useRestTimer({ audio: audioManager, onEvent: handleTimerEvent, pauseWhenHidden: true });
   const restOverlayActive = isRest || (phase === 'paused' && pausedFrom === 'rest');
 
   useEffect(() => {
@@ -155,22 +168,6 @@ function App() {
     window.addEventListener('beforeinstallprompt', handler);
     return () => window.removeEventListener('beforeinstallprompt', handler);
   }, []);
-
-  useEffect(() => {
-    if (!workSettings.enabled || !workSettings.autoPause) return undefined;
-    const check = () => {
-      if (!isWorkingTime(workSettings) && isRunning) {
-        schedulePausedRef.current = true;
-        pause();
-      } else if (isWorkingTime(workSettings) && phase === 'paused' && schedulePausedRef.current) {
-        schedulePausedRef.current = false;
-        start();
-      }
-    };
-    check();
-    const timer = window.setInterval(check, 30_000);
-    return () => window.clearInterval(timer);
-  }, [workSettings, isRunning, phase, pause, start]);
 
   const handleStart = () => {
     requestNotifications();
@@ -186,11 +183,6 @@ function App() {
     const date = new Date(Date.now() + secondsLeft * 1000);
     return `Next reminder · ${date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
   }, [isRunning, secondsLeft]);
-
-  useEffect(() => {
-    document.title = isRunning ? `${formatTime(secondsLeft)} · Blink` : `${phase === 'paused' ? 'Paused' : 'Ready'} · Blink`;
-    return () => { document.title = 'Blink — Give your eyes a better rhythm'; };
-  }, [isRunning, phase, secondsLeft]);
 
   useEffect(() => {
     if (!restOverlayActive) return undefined;
@@ -545,7 +537,7 @@ function App() {
             <h2 id="rest-title">Look 20 meters away.</h2>
             <p id="rest-description">Let your gaze leave the screen. Soften your eyes, blink slowly, and look at something across the room.</p>
             <div className="rest-countdown"><strong>{formatTime(secondsLeft)}</strong><span>{isRest ? 'remaining' : 'paused'}</span></div>
-            <div className="rest-overlay-actions"><button type="button" className="primary-button" onClick={isRest ? pause : start}>{isRest ? <><Pause size={17} /> Pause</> : <><Play size={17} /> Resume</>}</button><button type="button" className="secondary-button rest-sound-toggle" onClick={toggleBreakSound} aria-label={sound.settings.enabled ? 'Mute music' : 'Unmute music'} title={sound.settings.enabled ? 'Mute music (M)' : 'Unmute music (M)'}>{sound.settings.enabled ? <Volume2 size={17} /> : <VolumeX size={17} />}</button></div>
+            <div className="rest-overlay-actions"><button type="button" className="primary-button" onClick={isRest ? pause : start}>{isRest ? <><Pause size={17} /> Pause</> : <><Play size={17} /> Resume</>}</button>{isRest && <button type="button" className="secondary-button rest-sound-stop" onClick={stopSound} aria-label="Stop ringing music" title="Stop ringing music"><VolumeX size={17} /> Stop music</button>}<button type="button" className="secondary-button rest-sound-toggle" onClick={toggleBreakSound} aria-label={sound.settings.enabled ? 'Mute music' : 'Unmute music'} title={sound.settings.enabled ? 'Mute music (M)' : 'Unmute music (M)'}>{sound.settings.enabled ? <Volume2 size={17} /> : <VolumeX size={17} />}</button></div>
             <p className="rest-overlay-note">Your focus session will continue automatically.</p>
           </div>
         </div>}
@@ -626,8 +618,10 @@ function App() {
               <p className="eyebrow">Progressive Web App (PWA) <span>/</span> Installable web app</p>
               <div className="apk-identity">
                 <span className="apk-icon" aria-hidden="true"><Eye size={26} /></span>
-                <div><strong>Blink PWA</strong><small>20—20—20 eye-care timer</small></div>
+                <div><strong>Blink</strong><small>20—20—20 eye-care timer</small></div>
+                
               </div>
+              <div><strong>What is PWA?</strong><br /><small> PWA (Progressive Web App) is a website that can be installed and used like a native mobile app, without downloading it from the Play Store.</small></div><br />
               <h2 id="pwa-title">Use Blink as a PWA</h2>
               <p className="download-copy">Install Blink directly from your browser for a focused, app-like experience. Your timer and settings stay on this device.</p>
               <div className="download-actions">
