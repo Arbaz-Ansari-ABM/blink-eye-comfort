@@ -55,6 +55,11 @@ The install prompt is shown by supported Chromium browsers after the app meets t
 criteria. On iOS Safari, use **Share → Add to Home Screen**. Screen Wake Lock, vibration, notifications,
 and background execution are browser/device capabilities and should be tested on the target device.
 
+On supported browsers, break notifications are delivered through the service worker and expose Pause,
+Resume, and Stop actions. This improves control while the PWA is backgrounded, but a web PWA cannot
+guarantee continuous JavaScript execution while the OS has fully suspended or killed the browser.
+The timer therefore remains timestamp-based and reconciles its state when the app becomes active again.
+
 ## Android packaging
 
 The project now includes a Capacitor Android wrapper with a native foreground timer service. In the

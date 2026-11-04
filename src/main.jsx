@@ -17,16 +17,30 @@ function requestNotifications() {
   }
 }
 
-function notify(title, body) {
-  if ('Notification' in window && Notification.permission === 'granted') {
-    new Notification(title, {
-      body,
-      silent: false,
-      renotify: true,
-      requireInteraction: true,
-      tag: 'blink-break-alert',
-    });
+async function notify(title, body) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  const options = {
+    body,
+    silent: false,
+    renotify: true,
+    requireInteraction: true,
+    tag: 'blink-break-alert',
+    actions: [
+      { action: 'pause', title: 'Pause' },
+      { action: 'resume', title: 'Resume' },
+      { action: 'stop', title: 'Stop' },
+    ],
+  };
+  try {
+    const registration = await navigator.serviceWorker?.ready;
+    if (registration?.showNotification) {
+      await registration.showNotification(title, options);
+      return;
+    }
+  } catch (error) {
+    console.warn('[Blink] service-worker notification unavailable', error);
   }
+  new Notification(title, options);
 }
 
 function formatTime(total) {
@@ -234,6 +248,17 @@ function App() {
   useEffect(() => {
     if (audioState.blocked) setNotice('Sound is waiting for a tap. Tap anywhere to enable it.');
   }, [audioState.blocked]);
+
+  useEffect(() => {
+    const onServiceWorkerMessage = (event) => {
+      if (event.data?.type !== 'blink-notification-action') return;
+      if (event.data.action === 'pause') pause();
+      if (event.data.action === 'resume') start();
+      if (event.data.action === 'stop') reset();
+    };
+    navigator.serviceWorker?.addEventListener('message', onServiceWorkerMessage);
+    return () => navigator.serviceWorker?.removeEventListener('message', onServiceWorkerMessage);
+  }, [pause, reset, start]);
 
   useEffect(() => {
     if (!restOverlayActive) {
