@@ -5,6 +5,7 @@ export const REST_SECONDS = 20;
 const STORAGE_KEY = 'blink-timer-state';
 const TICK_MS = 250;
 const AWAY_RESET_MS = 5 * 60 * 1000;
+const HIDDEN_PAUSE_DELAY_MS = 5000;
 
 const dayKey = (timestamp) => new Date(timestamp).toISOString().slice(0, 10);
 const emptyDaily = () => ({});
@@ -15,7 +16,7 @@ function loadInitial(now = Date.now()) {
   const base = {
     phase: 'stopped', pausedFrom: null, pausedAt: null, secondsLeft: FOCUS_SECONDS, endsAt: null,
     completed: 0, totalCompletedBreaks: 0, lastRest: 'Not yet today', screenTime: 0, startedAt: null,
-    breakStartAt: null, lastActiveAt: now, hiddenPaused: false, daily: emptyDaily(), weekly: {},
+    breakStartAt: null, lastActiveAt: now, hiddenPaused: false, resumeOnLaunch: false, daily: emptyDaily(), weekly: {},
   };
   let saved = null;
   try { saved = JSON.parse(window.localStorage.getItem(STORAGE_KEY)); } catch { saved = null; }
@@ -32,7 +33,7 @@ function loadInitial(now = Date.now()) {
     state.phase = 'paused';
     state.pausedAt = now;
     state.endsAt = null;
-    state.hiddenPaused = true;
+    state.hiddenPaused = state.resumeOnLaunch === true;
     state.secondsLeft = Math.max(1, state.secondsLeft);
   }
   if (state.hiddenPaused && state.pausedAt && now - state.pausedAt >= AWAY_RESET_MS) {
@@ -127,7 +128,7 @@ export function useRestTimer({ audio, onEvent, pauseWhenHidden = true }) {
         commit({
           phase: 'stopped', pausedFrom: null, pausedAt: null, secondsLeft: FOCUS_SECONDS,
           endsAt: null, startedAt: null, screenTime: 0,
-          breakStartAt: null, lastActiveAt: now, hiddenPaused: false,
+          breakStartAt: null, lastActiveAt: now, hiddenPaused: false, resumeOnLaunch: false,
         });
         emit('reset');
       } else if (current.hiddenPaused) {
@@ -135,7 +136,7 @@ export function useRestTimer({ audio, onEvent, pauseWhenHidden = true }) {
         const remaining = Math.max(1, current.secondsLeft);
         commit({
           phase, endsAt: now + remaining * 1000, pausedFrom: null, pausedAt: null,
-          hiddenPaused: false, lastActiveAt: now,
+          hiddenPaused: false, resumeOnLaunch: false, lastActiveAt: now,
           startedAt: current.startedAt ? current.startedAt + awayFor : now,
         });
         if (phase === 'rest') {
@@ -143,7 +144,7 @@ export function useRestTimer({ audio, onEvent, pauseWhenHidden = true }) {
         }
         emit('resumed');
       } else {
-        commit({ lastActiveAt: Date.now() });
+        commit({ lastActiveAt: Date.now(), resumeOnLaunch: false });
         tick();
       }
     };
@@ -162,10 +163,10 @@ export function useRestTimer({ audio, onEvent, pauseWhenHidden = true }) {
         audio.stopAll();
         commit({
           phase: 'paused', pausedFrom: latest.phase, pausedAt: now, secondsLeft: remaining,
-          endsAt: null, hiddenPaused: true, lastActiveAt: now,
+          endsAt: null, hiddenPaused: true, resumeOnLaunch: false, lastActiveAt: now,
         });
         emit('paused');
-      }, 1500);
+      }, HIDDEN_PAUSE_DELAY_MS);
     };
     const onPageHide = () => {
       const current = stateRef.current;
@@ -174,7 +175,7 @@ export function useRestTimer({ audio, onEvent, pauseWhenHidden = true }) {
         window.clearTimeout(hiddenPauseTimerRef.current);
         hiddenPauseTimerRef.current = null;
       }
-      commit({ lastActiveAt: Date.now() });
+      commit({ lastActiveAt: Date.now(), resumeOnLaunch: true });
     };
     document.addEventListener('visibilitychange', onVisible);
     document.addEventListener('visibilitychange', onHidden);
