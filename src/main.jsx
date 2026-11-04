@@ -523,7 +523,7 @@ function App() {
     return () => {
       document.body.classList.remove('menu-open');
     };
-  }, [mobileMenuOpen, showSound, showHelp, showJournal]);
+  }, [mobileMenuOpen, showSound, showHelp, showJournal, showSettings]);
 
   useEffect(() => {
     if (!mobileMenuOpen) return undefined;
