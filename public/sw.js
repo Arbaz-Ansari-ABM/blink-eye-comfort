@@ -1,5 +1,5 @@
 const CACHE_NAME = 'blink-shell-v3';
-const APP_SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icons/icon.svg', '/icons/icon-192.png', '/icons/icon-512.png'];
+const APP_SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icons/icon-favicon.png', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/apple-touch-icon.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
