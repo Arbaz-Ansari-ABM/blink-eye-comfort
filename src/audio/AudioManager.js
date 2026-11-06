@@ -19,7 +19,7 @@ export { BUILT_IN_RINGTONES, RINGTONE_SECONDS };
 export const CUSTOM_RINGTONE_ID = 'custom';
 
 const LOG = '[Blink audio]';
-const CHANNEL_NAMES = ['rest', 'ringtone', 'preview'];
+const CHANNEL_NAMES = ['rest', 'ringtone', 'preview', 'scheduled'];
 const RESUME_TIMEOUT_MS = 700;
 const FADE_OUT_SECONDS = 0.015;
 
@@ -367,6 +367,46 @@ export class AudioManager {
   }
 
   stopPreview() { this._stopChannel('preview'); }
+
+  /**
+   * Schedules the next alert in Web Audio. Unlike window timers, an audio
+   * source keeps its deadline when the page is backgrounded by the browser.
+   */
+  async scheduleRingtone({ delaySec = 0, maxSec = RINGTONE_SECONDS, key = null } = {}) {
+    if (!this.settings.enabled || delaySec < 0 || maxSec <= 0) return false;
+    this._stopChannel('scheduled', false);
+    const token = ++this.token;
+    const running = await this._ensureRunning();
+    if (!running || token !== this.token) return false;
+    const buffer = await this._getBuffer(this._ringtoneDesc(this.settings.ringtoneId));
+    if (token !== this.token || !buffer || !this.ctx || !this.master) return false;
+
+    const source = this.ctx.createBufferSource();
+    const gain = this.ctx.createGain();
+    source.buffer = buffer;
+    source.loop = true;
+    source.connect(gain);
+    gain.connect(this.master);
+    const startAt = this.ctx.currentTime + delaySec;
+    const endAt = startAt + maxSec;
+    gain.gain.setValueAtTime(1, startAt);
+    gain.gain.setValueAtTime(1, Math.max(startAt, endAt - FADE_OUT_SECONDS * 2));
+    gain.gain.linearRampToValueAtTime(0, endAt);
+    source.start(startAt);
+    source.stop(endAt);
+    const active = {
+      id: key,
+      kind: 'scheduled',
+      endsAtWall: Date.now() + (delaySec + maxSec) * 1000,
+      stop: () => { try { source.stop(); } catch (error) { /* already stopped */ } },
+      cleanup: () => { try { source.disconnect(); gain.disconnect(); } catch (error) { /* already stopped */ } },
+    };
+    source.onended = () => this._release('scheduled', active);
+    this.channels.scheduled = active;
+    this.lastEngine = 'webaudio';
+    this._emit();
+    return true;
+  }
 
   stopAll() {
     this.token += 1;

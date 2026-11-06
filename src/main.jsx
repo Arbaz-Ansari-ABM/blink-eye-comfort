@@ -42,7 +42,7 @@ function getFocusableElements(container) {
 const SETTINGS_KEY = 'blink-working-settings';
 const DEFAULT_WORK_SETTINGS = {
   enabled: true, autoPause: true, start: '09:00', end: '18:00',
-  days: [1, 2, 3, 4, 5], pauseWhenHidden: true,
+  days: [1, 2, 3, 4, 5],
 };
 
 function readWorkSettings() {
@@ -245,7 +245,7 @@ function App() {
 
   const {
     phase, pausedFrom, secondsLeft, completed, daily, lastRest, screenTime, isRunning, isRest, start, pause, reset, stopSound,
-  } = useRestTimer({ audio: audioManager, onEvent: handleTimerEvent, pauseWhenHidden: true });
+  } = useRestTimer({ audio: audioManager, onEvent: handleTimerEvent });
   const restOverlayActive = isRest || (phase === 'paused' && pausedFrom === 'rest');
 
   useEffect(() => {
@@ -873,9 +873,7 @@ const route = window.location.pathname.replace(/\/+$/, '') || '/';
 createRoot(document.getElementById('root')).render(LEGAL_PAGES[route] || route === '/contact' ? <LegalPage pageKey={route === '/contact' ? '/contact' : route} /> : <App />);
 
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch((error) => {
-      console.error('[Blink] Service worker registration failed', error);
-    });
+  navigator.serviceWorker.register('/sw.js').catch((error) => {
+    console.error('[Blink] Service worker registration failed', error);
   });
 }

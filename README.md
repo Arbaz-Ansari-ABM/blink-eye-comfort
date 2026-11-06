@@ -17,7 +17,7 @@ Built for developers, designers, and anyone glued to a display, Blink automates 
 - **Working hours** — Configure working days, working hours, overnight-safe quiet hours, and automatic pause/resume from the Working hours panel.
 - **Weekly dashboard** — Review Monday-to-Sunday break consistency with locally persisted activity.
 - **Wake lock and device alerts** — Rest mode requests Screen Wake Lock where supported and uses sound, vibration, and accessible visual controls with graceful fallbacks.
-- **Screen-aware timer** — Pauses while the tab is hidden by default, resumes when visible, and starts a fresh focus cycle after a five-minute absence.
+- **Background-safe timer** — Continues from timestamps when the tab is hidden or another app is active, without countdown drift.
 - **Break music controls** — The selected calm built-in tone plays during the 20-second break, with a persisted mute control and keyboard shortcut.
 ---
  
@@ -57,7 +57,9 @@ The install prompt is shown by supported Chromium browsers after the app meets t
 criteria. On iOS Safari, use **Share → Add to Home Screen**. Screen Wake Lock, vibration, notifications,
 and background execution are browser/device capabilities and should be tested on the target device.
 
-Blink is intentionally web/PWA-only. When “Pause when tab is hidden” is enabled, the timer pauses
-when the browser tab becomes hidden or the device display sleeps, then resumes when the page becomes
-visible again. Browser autoplay, vibration, notifications, and Screen Wake Lock are feature-detected
-and depend on the target browser and device.
+Blink is intentionally web/PWA-only. The timer continues from its timestamps when you switch tabs,
+use another app, or the device display sleeps; the next audio alert is scheduled after the start
+gesture so background-tab timer throttling cannot make the countdown drift.
+The browser may suspend audio while Blink is hidden, so alerts use the available notification and
+vibration fallbacks when supported. Browser autoplay, vibration, notifications, and Screen Wake Lock
+are feature-detected and depend on the target browser and device.
