@@ -873,7 +873,9 @@ const route = window.location.pathname.replace(/\/+$/, '') || '/';
 createRoot(document.getElementById('root')).render(LEGAL_PAGES[route] || route === '/contact' ? <LegalPage pageKey={route === '/contact' ? '/contact' : route} /> : <App />);
 
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js').catch((error) => {
-    console.error('[Blink] Service worker registration failed', error);
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch((error) => {
+      console.error('[Blink] Service worker registration failed', error);
+    });
   });
 }
